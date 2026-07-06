@@ -63,19 +63,47 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 	isNew := editing == nil
 
 	nameEntry := widget.NewEntry()
+	nameEntry.Wrapping = fyne.TextWrapOff
+	nameEntry.Scroll = container.ScrollNone
+
 	protoSelect := widget.NewSelect(protoLabels(), nil)
 	hostEntry := widget.NewEntry()
+	hostEntry.Wrapping = fyne.TextWrapOff
+	hostEntry.Scroll = container.ScrollNone
+
 	ipsEntry := widget.NewEntry()
+	ipsEntry.Wrapping = fyne.TextWrapOff
+	ipsEntry.Scroll = container.ScrollNone
 	ipsEntry.SetPlaceHolder(i18n.T("PlaceholderServerIPs"))
+
 	portEntry := widget.NewEntry()
+	portEntry.Wrapping = fyne.TextWrapOff
+	portEntry.Scroll = container.ScrollNone
+
 	pathEntry := widget.NewEntry()
+	pathEntry.Wrapping = fyne.TextWrapOff
+	pathEntry.Scroll = container.ScrollNone
+
 	userEntry := widget.NewEntry()
+	userEntry.Wrapping = fyne.TextWrapOff
+	userEntry.Scroll = container.ScrollNone
+
 	passEntry := widget.NewPasswordEntry()
+	passEntry.Wrapping = fyne.TextWrapOff
+	passEntry.Scroll = container.ScrollNone
+
 	authSelect := widget.NewSelect(authModeLabels(), nil)
 	routeSelect := widget.NewSelect(routeModeLabels(), nil)
+
 	cidrEntry := widget.NewMultiLineEntry()
+	cidrEntry.Wrapping = fyne.TextWrapOff
+	cidrEntry.Scroll = container.ScrollNone
+	cidrEntry.SetMinRowsVisible(4)
 	cidrEntry.SetPlaceHolder(i18n.T("PlaceholderCIDRs"))
+
 	mtuEntry := widget.NewEntry()
+	mtuEntry.Wrapping = fyne.TextWrapOff
+	mtuEntry.Scroll = container.ScrollNone
 	mtuEntry.SetPlaceHolder(i18n.T("PlaceholderMTU"))
 
 	if !isNew {
