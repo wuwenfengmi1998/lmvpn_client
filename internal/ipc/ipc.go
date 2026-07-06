@@ -5,8 +5,8 @@
 // Protocol: newline-delimited JSON. Each message is one JSON object
 // followed by '\n'.
 //
-//   GUI → daemon:  Request  (start, stop, shutdown, stats)
-//   daemon → GUI:  Event    (state, stats, error)
+//	GUI → daemon:  Request  (start, stop, shutdown, stats)
+//	daemon → GUI:  Event    (state, stats, error)
 package ipc
 
 import (
@@ -49,6 +49,8 @@ type Request struct {
 // package (which needs root-only TUN) into the GUI.
 type ClientConfig struct {
 	ServerURL   string   `json:"server_url"`
+	SNIHost     string   `json:"sni_host"`    // TLS SNI hostname for CDN
+	ServerIPs   []string `json:"server_ips"`  // CDN edge IP list for failover
 	Username    string   `json:"username"`
 	Password    string   `json:"password"`
 	Token       string   `json:"token"`

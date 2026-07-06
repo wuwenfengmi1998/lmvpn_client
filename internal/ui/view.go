@@ -51,6 +51,8 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 	editBtn := widget.NewButton(i18n.T("BtnEdit"), a.onEditProfile)
 	deleteBtn := widget.NewButton(i18n.T("BtnDelete"), a.onDeleteProfile)
 
+	resetDBBtn := widget.NewButton(i18n.T("BtnResetDB"), a.onResetDB)
+
 	buttons := container.NewGridWithColumns(2,
 		a.connectBtn, a.disconnectBtn,
 	)
@@ -63,6 +65,7 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 		a.profileSelect,
 		buttons,
 		profileButtons,
+		resetDBBtn,
 		statusCard,
 	)
 }
@@ -109,15 +112,25 @@ func (a *App) onConnect() {
 			return
 		}
 
+		p := a.currentProfile
+		serverURL := p.BuildServerURL()
+		sniHost := ""
+		serverIPs := p.GetServerIPList()
+		if len(serverIPs) > 0 {
+			sniHost = p.Host
+		}
+
 		// Build and send the start command.
 		cfg := ipc.ClientConfig{
-			ServerURL:   a.currentProfile.ServerURL,
-			Username:    a.currentProfile.Username,
+			ServerURL:   serverURL,
+			SNIHost:     sniHost,
+			ServerIPs:   serverIPs,
+			Username:    p.Username,
 			Password:    password,
-			AuthMode:    string(a.currentProfile.AuthMode),
-			RoutingMode: string(a.currentProfile.RoutingMode),
-			CustomCIDRs: splitCIDRs(a.currentProfile.CustomCIDRs),
-			MTUOverride: a.currentProfile.MTUOverride,
+			AuthMode:    string(p.AuthMode),
+			RoutingMode: string(p.RoutingMode),
+			CustomCIDRs: splitCIDRs(p.CustomCIDRs),
+			MTUOverride: p.MTUOverride,
 		}
 		if err := ipc.SendStart(client, cfg); err != nil {
 			fyne.Do(func() {

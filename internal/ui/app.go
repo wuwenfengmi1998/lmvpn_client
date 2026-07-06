@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"os"
 	"sync"
 
 	"lmvpn/internal/config"
@@ -178,6 +179,60 @@ func (a *App) onDeleteProfile() {
 			}
 			_ = a.kc.DeleteAll(name)
 			a.loadProfiles()
+		}, a.window).Show()
+}
+
+// onResetDB deletes the SQLite database file after confirmation,
+// then re-creates it. All profiles, credentials, and logs are lost.
+func (a *App) onResetDB() {
+	dialog.NewCustomConfirm(i18n.T("DlgResetDBTitle"),
+		i18n.T("BtnDelete"), i18n.T("BtnCancel"),
+		widget.NewLabel(i18n.T("DlgResetDBMsg")),
+		func(ok bool) {
+			if !ok {
+				return
+			}
+
+			// Disconnect if connected.
+			a.mu.Lock()
+			client := a.ipcClient
+			a.mu.Unlock()
+			if client != nil {
+				_ = ipc.SendStop(client)
+			}
+
+			// Clear keychain entries for all profiles.
+			for _, p := range a.profiles {
+				_ = a.kc.DeleteAll(p.Name)
+			}
+
+			// Close and delete database.
+			if a.db != nil {
+				a.db.Close()
+			}
+			if err := os.Remove(paths.DBPath()); err != nil {
+				showError(i18n.T("DlgError"), err.Error(), a.window)
+				return
+			}
+
+			// Re-open (auto-creates new database).
+			store, err := db.Open()
+			if err != nil {
+				showError(i18n.T("DlgError"), err.Error(), a.window)
+				return
+			}
+			a.db = store
+
+			// Reset UI state.
+			a.currentProfile = nil
+			a.loadProfiles()
+			a.stateLabel.SetText(i18n.T("StateDisconnected"))
+			a.ipLabel.SetText(i18n.T("IpNone"))
+			a.uptimeLabel.SetText(i18n.T("UptimeNone"))
+			a.rxLabel.SetText(i18n.T("RxZero"))
+			a.txLabel.SetText(i18n.T("TxZero"))
+			a.connectBtn.Enable()
+			a.disconnectBtn.Disable()
 		}, a.window).Show()
 }
 

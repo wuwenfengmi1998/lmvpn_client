@@ -28,6 +28,8 @@ import (
 // SessionConfig describes how to connect to a VPN server.
 type SessionConfig struct {
 	ServerURL   string
+	SNIHost     string   // TLS SNI hostname for CDN
+	ServerIPs   []string // CDN edge IPs for failover
 	Username    string
 	Password    string
 	AuthMode    model.AuthMode
@@ -109,19 +111,29 @@ func (sm *SessionManager) Disconnect() {
 	}
 }
 
-// run is the main session loop with exponential-backoff reconnection.
+// run is the main session loop with exponential-backoff reconnection
+// and CDN IP failover.
 func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 	defer sm.setState(stats.StateDisconnected)
 
 	backoff := time.Second
 	maxBackoff := 60 * time.Second
 
+	// Build the full target list: original host first, then CDN IPs.
+	targets := append([]string{""}, cfg.ServerIPs...) // "" = use base URL
+	ipIndex := 0
+
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 
-		err := sm.connectOnce(ctx, cfg)
+		targetIP := ""
+		if ipIndex > 0 && ipIndex < len(targets) {
+			targetIP = targets[ipIndex]
+		}
+
+		err := sm.connectOnce(ctx, cfg, targetIP)
 		if ctx.Err() != nil {
 			sm.cleanup()
 			return
@@ -130,11 +142,20 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 		if err != nil {
 			log.L().Error("VPN connection failed", "error", err)
 			sm.setState(stats.StateReconnecting)
+
+			// Try next CDN IP immediately.
+			ipIndex++
+			if ipIndex < len(targets) {
+				log.L().Info("trying next CDN IP", "index", ipIndex, "ip", targets[ipIndex])
+				continue
+			}
+			// All targets exhausted; reset and wait with backoff.
+			ipIndex = 0
 		} else {
 			sm.setState(stats.StateReconnecting)
+			ipIndex = 0
 		}
 
-		// Wait before reconnecting, unless cancelled.
 		select {
 		case <-ctx.Done():
 			sm.cleanup()
@@ -150,13 +171,20 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 
 // connectOnce performs a single connection lifecycle: authenticate,
 // handshake, configure TUN, apply routes, pump packets until failure.
-func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig) error {
+func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, targetIP string) error {
 	sm.setState(stats.StateConnecting)
+
+	// Build URL for this attempt. If targetIP is set (CDN failover),
+	// build a URL with that IP. Otherwise use base ServerURL.
+	serverURL := cfg.ServerURL
+	if targetIP != "" {
+		serverURL = replaceHost(cfg.ServerURL, targetIP)
+	}
 
 	// Determine auth strategy and obtain JWT if needed.
 	token := cfg.Token
 	if token == "" && (cfg.AuthMode == model.AuthModeJWT || cfg.AuthMode == model.AuthModeBoth) {
-		httpBase, err := auth.WSURLToHTTP(cfg.ServerURL)
+		httpBase, err := wsURLToHTTP(serverURL)
 		if err != nil {
 			return fmt.Errorf("parse server URL: %w", err)
 		}
@@ -176,7 +204,8 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig) er
 	// Prepare the TUN + route setup callback (called during handshake,
 	// between receiving init and sending ready).
 	handshake := transport.HandshakeConfig{
-		ServerURL: cfg.ServerURL,
+		ServerURL: serverURL,
+		SNIHost:   cfg.SNIHost,
 		Token:     token,
 		Username:  cfg.Username,
 		Password:  cfg.Password,
@@ -208,12 +237,6 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig) er
 	sm.mu.Lock()
 	sm.conn = conn
 	sm.mu.Unlock()
-
-	// If password auth was used (no token), the handshake already
-	// exchanged auth messages. For JWT, auth was implicit.
-	if token == "" {
-		// Password auth path already validated.
-	}
 
 	sm.stats.SetConnected(conn.Init().IP)
 	sm.setState(stats.StateConnected)
@@ -431,6 +454,13 @@ func serverHostFromURL(wsURL string) string {
 			break
 		}
 	}
+	// Strip port.
+	for i := 0; i < len(u); i++ {
+		if u[i] == ':' {
+			u = u[:i]
+			break
+		}
+	}
 	// Strip path.
 	for i := 0; i < len(u); i++ {
 		if u[i] == '/' {
@@ -439,4 +469,27 @@ func serverHostFromURL(wsURL string) string {
 		}
 	}
 	return u
+}
+
+// wsURLToHTTP converts a WebSocket URL to HTTP origin.
+func wsURLToHTTP(wsURL string) (string, error) {
+	return auth.WSURLToHTTP(wsURL)
+}
+
+// replaceHost substitutes the host portion of a URL string.
+// e.g. wss://host:443/ws with 1.2.3.4 → wss://1.2.3.4:443/ws
+func replaceHost(rawURL, newHost string) string {
+	u := rawURL
+	for _, prefix := range []string{"wss://", "ws://"} {
+		if len(u) > len(prefix) && u[:len(prefix)] == prefix {
+			rest := u[len(prefix):]
+			// Find end of host (either port or path).
+			end := 0
+			for end < len(rest) && rest[end] != ':' && rest[end] != '/' {
+				end++
+			}
+			return prefix + newHost + rest[end:]
+		}
+	}
+	return rawURL
 }

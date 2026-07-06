@@ -8,6 +8,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"lmvpn/internal/paths"
 
@@ -40,15 +41,139 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(schema)
-	return err
+	_, err := s.db.Exec(schemaV2)
+	if err != nil {
+		return err
+	}
+	return s.migrateV2()
 }
 
-const schema = `
+func (s *Store) migrateV2() error {
+	// Detect if migration is needed by checking if old server_url column
+	// still exists. If protocol column is present, v2 is already in place.
+	_, err := s.db.Exec(`SELECT protocol, host, server_ips, port, path FROM server_profiles LIMIT 0`)
+	if err == nil {
+		return nil // already v2
+	}
+
+	// Check if old table exists.
+	var count int
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='server_profiles' AND sql LIKE '%server_url%'`).Scan(&count)
+	if err != nil || count == 0 {
+		return nil // nothing to migrate
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v2 begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`ALTER TABLE server_profiles RENAME TO server_profiles_old`)
+	if err != nil {
+		return fmt.Errorf("migrate v2 rename: %w", err)
+	}
+
+	_, err = tx.Exec(schemaV2)
+	if err != nil {
+		return fmt.Errorf("migrate v2 create new: %w", err)
+	}
+
+	rows, err := tx.Query(`SELECT id, name, server_url, username, auth_mode, routing_mode, custom_cidrs, mtu_override, auto_connect, created_at, last_connected_at FROM server_profiles_old`)
+	if err != nil {
+		return fmt.Errorf("migrate v2 read old: %w", err)
+	}
+	defer rows.Close()
+
+	insert, err := tx.Prepare(`INSERT INTO server_profiles (id, name, protocol, host, server_ips, port, path, username, auth_mode, routing_mode, custom_cidrs, mtu_override, auto_connect, created_at, last_connected_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		return fmt.Errorf("migrate v2 prepare insert: %w", err)
+	}
+	defer insert.Close()
+
+	for rows.Next() {
+		var id int64
+		var name, serverURL, username, authMode, routingMode, customCIDRs string
+		var mtuOverride int
+		var autoConnect int
+		var createdAt, lastConnectedAt sql.NullString
+		if err := rows.Scan(&id, &name, &serverURL, &username, &authMode, &routingMode, &customCIDRs, &mtuOverride, &autoConnect, &createdAt, &lastConnectedAt); err != nil {
+			return fmt.Errorf("migrate v2 scan: %w", err)
+		}
+		protocol, host, ips, port, path := parseOldURL(serverURL)
+		_, err = insert.Exec(id, name, protocol, host, ips, port, path, username, authMode, routingMode, customCIDRs, mtuOverride, autoConnect, nullStr(createdAt), nullStr(lastConnectedAt))
+		if err != nil {
+			return fmt.Errorf("migrate v2 insert: %w", err)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`DROP TABLE server_profiles_old`)
+	if err != nil {
+		return fmt.Errorf("migrate v2 drop old: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+func parseOldURL(raw string) (protocol, host, ips, path string, port int) {
+	u := raw
+	switch {
+	case strings.HasPrefix(u, "wss://"):
+		protocol = "wss"
+		u = u[6:]
+	case strings.HasPrefix(u, "ws://"):
+		protocol = "ws"
+		u = u[5:]
+	default:
+		protocol = "wss"
+	}
+
+	path = "/ws"
+	if i := strings.IndexByte(u, '/'); i >= 0 {
+		path = u[i:]
+		u = u[:i]
+	}
+
+	port = 443
+	if i := strings.LastIndexByte(u, ':'); i >= 0 {
+		if p, err := stringToInt(u[i+1:]); err == nil {
+			port = p
+			u = u[:i]
+		}
+	}
+
+	host = u
+	return
+}
+
+func stringToInt(s string) (int, error) {
+	var n int
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, fmt.Errorf("not a number: %s", s)
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, nil
+}
+
+func nullStr(s sql.NullString) sql.NullString {
+	return s
+}
+
+const schemaV2 = `
 CREATE TABLE IF NOT EXISTS server_profiles (
 	id              INTEGER PRIMARY KEY AUTOINCREMENT,
 	name            TEXT    NOT NULL,
-	server_url      TEXT    NOT NULL,
+	protocol        TEXT    NOT NULL DEFAULT 'wss',
+	host            TEXT    NOT NULL,
+	server_ips      TEXT    NOT NULL DEFAULT '',
+	port            INTEGER NOT NULL DEFAULT 443,
+	path            TEXT    NOT NULL DEFAULT '/ws',
 	username        TEXT    NOT NULL,
 	auth_mode       TEXT    NOT NULL DEFAULT 'both',
 	routing_mode    TEXT    NOT NULL DEFAULT 'full',

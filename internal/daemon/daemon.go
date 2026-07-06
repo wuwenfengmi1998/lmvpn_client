@@ -129,6 +129,8 @@ func (d *daemon) startSession(conn net.Conn, req ipc.Request) {
 
 	cfg := vpn.SessionConfig{
 		ServerURL:   req.Config.ServerURL,
+		SNIHost:     req.Config.SNIHost,
+		ServerIPs:   req.Config.ServerIPs,
 		Username:    req.Config.Username,
 		Password:    req.Config.Password,
 		Token:       req.Config.Token,

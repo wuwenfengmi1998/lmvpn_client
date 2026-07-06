@@ -15,6 +15,7 @@ package transport
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -30,6 +31,7 @@ import (
 // HandshakeConfig configures a single connection attempt.
 type HandshakeConfig struct {
 	ServerURL string // e.g. wss://vpn.example.com/ws
+	SNIHost   string // TLS SNI hostname for CDN edge connections
 	Token     string // JWT; if non-empty, used via ?token= (method A)
 	Username  string // for password auth (method B), or fallback
 	Password  string // for password auth (method B), or fallback
@@ -55,23 +57,30 @@ func Connect(ctx context.Context, cfg HandshakeConfig) (*Conn, error) {
 		WriteBufferSize:  4096, // match server (handler.go:18)
 	}
 
-	// Build URL: append ?token= for JWT auth.
-	url := cfg.ServerURL
-	if cfg.Token != "" {
-		url = appendQuery(url, "token", cfg.Token)
+	if cfg.SNIHost != "" {
+		dialer.TLSClientConfig = &tls.Config{
+			ServerName: cfg.SNIHost,
+		}
 	}
 
-	// Omit Origin header (server allows empty Origin for non-browser
-	// clients — handler.go:19-29).
+	// Build URL: append ?token= for JWT auth.
+	urlStr := cfg.ServerURL
+	if cfg.Token != "" {
+		urlStr = appendQuery(urlStr, "token", cfg.Token)
+	}
+
 	header := http.Header{}
 	header.Set("Origin", "")
+	if cfg.SNIHost != "" {
+		header.Set("Host", cfg.SNIHost)
+	}
 
-	ws, resp, err := dialer.DialContext(ctx, url, header)
+	ws, resp, err := dialer.DialContext(ctx, urlStr, header)
 	if err != nil {
 		if resp != nil {
 			resp.Body.Close()
 		}
-		return nil, fmt.Errorf("dial %s: %w", url, err)
+		return nil, fmt.Errorf("dial %s: %w", urlStr, err)
 	}
 	defer resp.Body.Close()
 

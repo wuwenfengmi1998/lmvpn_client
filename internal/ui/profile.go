@@ -17,6 +17,8 @@ import (
 var (
 	authCodes  = []string{string(model.AuthModeBoth), string(model.AuthModeJWT), string(model.AuthModePassword)}
 	routeCodes = []string{string(model.RoutingFull), string(model.RoutingSplit), string(model.RoutingCustom)}
+
+	protoCodes  = []string{"wss", "ws"}
 )
 
 func authModeLabels() []string {
@@ -25,6 +27,10 @@ func authModeLabels() []string {
 
 func routeModeLabels() []string {
 	return []string{i18n.T("RoutingModeFull"), i18n.T("RoutingModeSplit"), i18n.T("RoutingModeCustom")}
+}
+
+func protoLabels() []string {
+	return []string{"wss", "ws"}
 }
 
 // codeIndex returns the position of code in codes, or 0 if not found.
@@ -57,7 +63,12 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 	isNew := editing == nil
 
 	nameEntry := widget.NewEntry()
-	serverEntry := widget.NewEntry()
+	protoSelect := widget.NewSelect(protoLabels(), nil)
+	hostEntry := widget.NewEntry()
+	ipsEntry := widget.NewEntry()
+	ipsEntry.SetPlaceHolder(i18n.T("PlaceholderServerIPs"))
+	portEntry := widget.NewEntry()
+	pathEntry := widget.NewEntry()
 	userEntry := widget.NewEntry()
 	passEntry := widget.NewPasswordEntry()
 	authSelect := widget.NewSelect(authModeLabels(), nil)
@@ -69,7 +80,13 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 
 	if !isNew {
 		nameEntry.SetText(editing.Name)
-		serverEntry.SetText(editing.ServerURL)
+		protoSelect.SetSelectedIndex(codeIndex(protoCodes, editing.Protocol))
+		hostEntry.SetText(editing.Host)
+		ipsEntry.SetText(editing.ServerIPs)
+		if editing.Port > 0 {
+			portEntry.SetText(fmtInt(editing.Port))
+		}
+		pathEntry.SetText(editing.Path)
 		userEntry.SetText(editing.Username)
 		authSelect.SetSelectedIndex(codeIndex(authCodes, string(editing.AuthMode)))
 		routeSelect.SetSelectedIndex(codeIndex(routeCodes, string(editing.RoutingMode)))
@@ -77,18 +94,39 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 		mtuEntry.SetText(fmtInt(editing.MTUOverride))
 		passEntry.SetPlaceHolder(i18n.T("PlaceholderPasswordUnchanged"))
 	} else {
+		protoSelect.SetSelectedIndex(0) // wss
+		portEntry.SetText("443")
+		pathEntry.SetText("/ws")
 		authSelect.SetSelectedIndex(codeIndex(authCodes, string(model.AuthModeBoth)))
 		routeSelect.SetSelectedIndex(codeIndex(routeCodes, string(model.RoutingFull)))
 		mtuEntry.SetText("0")
 	}
 
 	form := container.NewVBox(
-		widget.NewLabel(i18n.T("FieldName")), nameEntry,
-		widget.NewLabel(i18n.T("FieldServerURL")), serverEntry,
-		widget.NewLabel(i18n.T("FieldUsername")), userEntry,
-		widget.NewLabel(i18n.T("FieldPassword")), passEntry,
-		widget.NewLabel(i18n.T("FieldAuthMode")), authSelect,
-		widget.NewLabel(i18n.T("FieldRoutingMode")), routeSelect,
+		widget.NewLabel(i18n.T("FieldName")),
+		nameEntry,
+
+		container.NewBorder(nil, nil,
+			container.NewVBox(widget.NewLabel(i18n.T("FieldProtocol")), protoSelect),
+			container.NewVBox(widget.NewLabel(i18n.T("FieldPort")), portEntry),
+			container.NewVBox(widget.NewLabel(i18n.T("FieldHost")), hostEntry),
+		),
+
+		container.NewGridWithColumns(2,
+			container.NewVBox(widget.NewLabel(i18n.T("FieldPath")), pathEntry),
+			container.NewVBox(widget.NewLabel(i18n.T("FieldServerIPs")), ipsEntry),
+		),
+
+		container.NewGridWithColumns(2,
+			container.NewVBox(widget.NewLabel(i18n.T("FieldUsername")), userEntry),
+			container.NewVBox(widget.NewLabel(i18n.T("FieldPassword")), passEntry),
+		),
+
+		container.NewGridWithColumns(2,
+			container.NewVBox(widget.NewLabel(i18n.T("FieldAuthMode")), authSelect),
+			container.NewVBox(widget.NewLabel(i18n.T("FieldRoutingMode")), routeSelect),
+		),
+
 		widget.NewLabel(i18n.T("FieldCustomCIDRs")), cidrEntry,
 		widget.NewLabel(i18n.T("FieldMTUOverride")), mtuEntry,
 	)
@@ -101,12 +139,17 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 	})
 
 	saveBtn := widget.NewButton(i18n.T("BtnSave"), func() {
-		a.saveProfile(editing, nameEntry.Text, serverEntry.Text,
+		if a.saveProfile(editing,
+			nameEntry.Text,
+			selectedCode(protoCodes, protoSelect.SelectedIndex()),
+			hostEntry.Text, ipsEntry.Text,
+			portEntry.Text, pathEntry.Text,
 			userEntry.Text, passEntry.Text,
 			selectedCode(authCodes, authSelect.SelectedIndex()),
 			selectedCode(routeCodes, routeSelect.SelectedIndex()),
-			cidrEntry.Text, mtuEntry.Text, isNew)
-		profileWin.Close()
+			cidrEntry.Text, mtuEntry.Text, isNew) {
+			profileWin.Close()
+		}
 	})
 	saveBtn.Importance = widget.HighImportance
 
@@ -114,25 +157,31 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 		profileWin.Close()
 	})
 
-	profileWin.SetContent(container.NewBorder(nil, container.NewHBox(saveBtn, cancelBtn), nil, nil, form))
+	profileWin.SetContent(container.NewBorder(nil, container.NewHBox(saveBtn, cancelBtn), nil, nil, container.NewVScroll(form)))
 	profileWin.Resize(fyne.NewSize(460, 560))
 	profileWin.Show()
 }
 
 // saveProfile creates or updates a profile and stores credentials.
+// Returns true on success, false if validation or DB operation failed.
 func (a *App) saveProfile(editing *model.ServerProfile,
-	name, server, user, password, authMode, routeMode, cidrs, mtuStr string, isNew bool) {
-	if name == "" || server == "" || user == "" {
+	name, protocol, host, ips, portStr, pathStr, user, password, authMode, routeMode, cidrs, mtuStr string, isNew bool) bool {
+	if name == "" || host == "" || user == "" {
 		showError(i18n.T("DlgValidationTitle"), i18n.T("DlgValidationMsg"), a.window)
-		return
+		return false
 	}
 
+	port := parseIntDefault(portStr, 443)
 	mtu := parseIntDefault(mtuStr, 0)
 
 	if isNew {
 		p := &model.ServerProfile{
 			Name:        name,
-			ServerURL:   server,
+			Protocol:    protocol,
+			Host:        host,
+			ServerIPs:   ips,
+			Port:        port,
+			Path:        pathStr,
 			Username:    user,
 			AuthMode:    model.AuthMode(authMode),
 			RoutingMode: model.RoutingMode(routeMode),
@@ -142,7 +191,7 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 		id, err := a.db.CreateProfile(p)
 		if err != nil {
 			showError(i18n.T("DlgSaveError"), err.Error(), a.window)
-			return
+			return false
 		}
 		_ = id
 		if password != "" {
@@ -153,7 +202,11 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 	} else {
 		oldName := editing.Name
 		editing.Name = name
-		editing.ServerURL = server
+		editing.Protocol = protocol
+		editing.Host = host
+		editing.ServerIPs = ips
+		editing.Port = port
+		editing.Path = pathStr
 		editing.Username = user
 		editing.AuthMode = model.AuthMode(authMode)
 		editing.RoutingMode = model.RoutingMode(routeMode)
@@ -161,7 +214,7 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 		editing.MTUOverride = mtu
 		if err := a.db.UpdateProfile(editing); err != nil {
 			showError(i18n.T("DlgSaveError"), err.Error(), a.window)
-			return
+			return false
 		}
 		if password != "" {
 			_ = a.kc.DeleteAll(oldName)
@@ -172,6 +225,7 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 	}
 
 	a.loadProfiles()
+	return true
 }
 
 func fmtInt(n int) string {

@@ -2,7 +2,11 @@
 // exchanged between application layers.
 package model
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // AuthMode selects how the client authenticates to a server.
 type AuthMode string
@@ -26,7 +30,11 @@ const (
 type ServerProfile struct {
 	ID              int64      `json:"id"`
 	Name            string     `json:"name"`
-	ServerURL       string     `json:"server_url"`        // e.g. wss://vpn.example.com/ws
+	Protocol        string     `json:"protocol"`   // "wss" (default) or "ws"
+	Host            string     `json:"host"`       // hostname for SNI, e.g. vpn.example.com
+	ServerIPs       string     `json:"server_ips"` // comma-separated CDN IPs, first used by default
+	Port            int        `json:"port"`       // default 443
+	Path            string     `json:"path"`       // default "/ws"
 	Username        string     `json:"username"`
 	AuthMode        AuthMode   `json:"auth_mode"`
 	RoutingMode     RoutingMode `json:"routing_mode"`
@@ -35,6 +43,58 @@ type ServerProfile struct {
 	AutoConnect     bool       `json:"auto_connect"`
 	CreatedAt       time.Time  `json:"created_at"`
 	LastConnectedAt *time.Time `json:"last_connected_at"`
+}
+
+// BuildServerURL constructs the WebSocket URL from the profile fields.
+// If ip is provided, it is used as the host portion instead of Host
+// (for CDN edge IP connections).
+// Default ports are omitted from the URL (443 for wss, 80 for ws).
+func (p *ServerProfile) BuildServerURL(ip ...string) string {
+	protocol := p.Protocol
+	if protocol == "" {
+		protocol = "wss"
+	}
+
+	host := p.Host
+	if len(ip) > 0 && ip[0] != "" {
+		host = ip[0]
+	}
+
+	port := p.Port
+	if port == 0 {
+		port = 443
+	}
+
+	path := p.Path
+	if path == "" {
+		path = "/ws"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	isDefaultPort := (protocol == "wss" && port == 443) || (protocol == "ws" && port == 80)
+
+	if isDefaultPort {
+		return fmt.Sprintf("%s://%s%s", protocol, host, path)
+	}
+	return fmt.Sprintf("%s://%s:%d%s", protocol, host, port, path)
+}
+
+// GetServerIPList parses ServerIPs into a string slice.
+func (p *ServerProfile) GetServerIPList() []string {
+	if p.ServerIPs == "" {
+		return nil
+	}
+	parts := strings.Split(p.ServerIPs, ",")
+	var out []string
+	for _, part := range parts {
+		s := strings.TrimSpace(part)
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // ConnectionStatus records the outcome of a connection attempt.
