@@ -20,10 +20,11 @@ import (
 
 // App is the GUI application controller.
 type App struct {
-	fyneApp fyne.App
-	db      *db.Store
-	kc      keychain.Store
-	window  fyne.Window
+	fyneApp       fyne.App
+	db            *db.Store
+	kc            keychain.Store
+	window        fyne.Window
+	profileWindow fyne.Window
 
 	// UI widgets
 	profileSelect *widget.Select
@@ -96,6 +97,7 @@ func Run() {
 
 	a.window.SetCloseIntercept(func() {
 		if cfg.CloseToTray {
+			hideDockIcon()
 			a.window.Hide()
 		} else {
 			a.fyneApp.Quit()

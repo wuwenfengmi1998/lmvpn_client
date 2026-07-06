@@ -35,8 +35,12 @@ app: build
 	else echo "  (no icon.icns found, skipping icon)"; fi
 	@echo "Built $(APP_BUNDLE)"
 
-## icon: generate icon.icns from resources/icon.png
+## icon: generate icon.icns from resources/icon.png (or resources/logo.svg)
 icon:
+	@if [ -f resources/logo.svg ] && [ ! -f resources/icon.png -o resources/logo.svg -nt resources/icon.png ]; then \
+		echo "Converting resources/logo.svg -> resources/icon.png"; \
+		sips -z 1024 1024 -s format png resources/logo.svg --out resources/icon.png >/dev/null 2>&1; \
+	fi
 	@if [ ! -f resources/icon.png ]; then echo "resources/icon.png not found"; exit 1; fi
 	mkdir -p resources/icon.iconset
 	@for size in 16 32 64 128 256 512 1024; do \

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <rect width="200" height="200" fill="#ffffff"/>
+  <g transform="translate(10, 2)">
+    <rect id="pot1" x="70" y="160" width="40" height="40" rx="20" ry="20" fill="#33BEFF"/>
+    <rect id="pot2" x="150" y="130" width="40" height="40" rx="20" ry="20" fill="#33BEFF"/>
+    <g id="shield">
+      <path d="M 72 50 L 108 50 L 108 74 Q 108 88 90 96 Q 72 88 72 74 Z" fill="#33BEFF"/>
+      <path d="M 86.5 66 A 3.5 3.5 0 1 1 93.5 66 L 91 80 L 89 80 Z" fill="#ffffff"/>
+    </g>
+    <rect id="line1" x="132" y="60" width="14" height="120" rx="7" ry="7" fill="#33BEFF" transform="rotate(-45 139 120)"/>
+    <rect id="line2" x="105" y="105" width="14" height="80" rx="7" ry="7" fill="#33BEFF" transform="rotate(30 112 145)"/>
+    <rect id="line3" x="45" y="80" width="14" height="50" rx="7" ry="7" fill="#B1B1B1" transform="rotate(45 52 105)"/>
+    <rect id="line4" x="30" y="45" width="14" height="50" rx="7" ry="7" fill="#B1B1B1" transform="rotate(90 37 70)"/>
+    <rect id="line5" x="43" y="8" width="14" height="50" rx="7" ry="7" fill="#B1B1B1" transform="rotate(135 50 33)"/>
+    <rect id="line6" x="81" y="-8" width="14" height="50" rx="7" ry="7" fill="#B1B1B1"/>
+    <rect id="line7" x="120" y="6" width="14" height="50" rx="7" ry="7" fill="#B1B1B1" transform="rotate(45 127 31)"/>
+    <rect id="line8" x="135" y="45" width="14" height="50" rx="7" ry="7" fill="#B1B1B1" transform="rotate(90 142 70)"/>
+  </g>
+</svg>

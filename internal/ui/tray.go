@@ -1,11 +1,15 @@
 package ui
 
 import (
+	_ "embed"
 	"lmvpn/internal/i18n"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/desktop"
 )
+
+//go:embed tray-icon.png
+var trayIconBytes []byte
 
 // setupTray configures the system tray menu (desktop only).
 func (a *App) setupTray() {
@@ -44,6 +48,7 @@ func (a *App) setupTray() {
 
 	menu := fyne.NewMenu(i18n.T("WindowTitle"),
 		fyne.NewMenuItem(i18n.T("TrayShowWindow"), func() {
+			showDockIcon()
 			a.window.Show()
 			a.window.RequestFocus()
 		}),
@@ -62,4 +67,6 @@ func (a *App) setupTray() {
 		}),
 	)
 	deskApp.SetSystemTrayMenu(menu)
+	trayIcon := fyne.NewStaticResource("tray-icon.png", trayIconBytes)
+	deskApp.SetSystemTrayIcon(trayIcon)
 }

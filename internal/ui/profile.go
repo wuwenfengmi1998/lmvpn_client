@@ -8,7 +8,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -46,9 +45,15 @@ func selectedCode(codes []string, idx int) string {
 	return codes[idx]
 }
 
-// showProfileDialog displays an add/edit dialog for a server profile.
-// If editing is nil, a new profile is created.
+// showProfileDialog opens a separate window for editing a server profile.
+// If editing is nil, a new profile is created. If a profile window is
+// already open, it is brought to the front instead of opening a second one.
 func (a *App) showProfileDialog(editing *model.ServerProfile) {
+	if a.profileWindow != nil {
+		a.profileWindow.RequestFocus()
+		return
+	}
+
 	isNew := editing == nil
 
 	nameEntry := widget.NewEntry()
@@ -88,18 +93,30 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 		widget.NewLabel(i18n.T("FieldMTUOverride")), mtuEntry,
 	)
 
-	d := dialog.NewCustomConfirm(i18n.T("DlgProfileTitle"), i18n.T("BtnSave"), i18n.T("BtnCancel"), form, func(save bool) {
-		if !save {
-			return
-		}
+	profileWin := a.fyneApp.NewWindow(i18n.T("DlgProfileTitle"))
+	a.profileWindow = profileWin
+
+	profileWin.SetOnClosed(func() {
+		a.profileWindow = nil
+	})
+
+	saveBtn := widget.NewButton(i18n.T("BtnSave"), func() {
 		a.saveProfile(editing, nameEntry.Text, serverEntry.Text,
 			userEntry.Text, passEntry.Text,
 			selectedCode(authCodes, authSelect.SelectedIndex()),
 			selectedCode(routeCodes, routeSelect.SelectedIndex()),
 			cidrEntry.Text, mtuEntry.Text, isNew)
-	}, a.window)
-	d.Resize(fyne.NewSize(400, 500))
-	d.Show()
+		profileWin.Close()
+	})
+	saveBtn.Importance = widget.HighImportance
+
+	cancelBtn := widget.NewButton(i18n.T("BtnCancel"), func() {
+		profileWin.Close()
+	})
+
+	profileWin.SetContent(container.NewBorder(nil, container.NewHBox(saveBtn, cancelBtn), nil, nil, container.NewScroll(form)))
+	profileWin.Resize(fyne.NewSize(460, 560))
+	profileWin.Show()
 }
 
 // saveProfile creates or updates a profile and stores credentials.
