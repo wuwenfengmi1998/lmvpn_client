@@ -18,6 +18,7 @@ type AppConfig struct {
 	CloseToTray      bool   `yaml:"close_to_tray"`
 	DefaultProfileID int64  `yaml:"default_profile_id"`
 	LogLevel         string `yaml:"log_level"` // debug, info, warn, error
+	Language         string `yaml:"language"`  // "", "auto", "en", "zh-Hans"
 }
 
 // Default returns the default configuration.
@@ -28,6 +29,7 @@ func Default() AppConfig {
 		CloseToTray:      true,
 		DefaultProfileID: 0,
 		LogLevel:         "info",
+		Language:         "", // empty = auto-detect from OS
 	}
 }
 

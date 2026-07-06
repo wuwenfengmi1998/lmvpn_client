@@ -3,6 +3,7 @@ package ui
 import (
 	"strconv"
 
+	"lmvpn/internal/i18n"
 	"lmvpn/internal/model"
 
 	"fyne.io/fyne/v2"
@@ -10,6 +11,40 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 )
+
+// authCodes and routeCodes keep the canonical enum values in a fixed
+// order so that dropdown display labels (which are localised) can be
+// mapped back to the codes stored in the database.
+var (
+	authCodes  = []string{string(model.AuthModeBoth), string(model.AuthModeJWT), string(model.AuthModePassword)}
+	routeCodes = []string{string(model.RoutingFull), string(model.RoutingSplit), string(model.RoutingCustom)}
+)
+
+func authModeLabels() []string {
+	return []string{i18n.T("AuthModeBoth"), i18n.T("AuthModeJWT"), i18n.T("AuthModePassword")}
+}
+
+func routeModeLabels() []string {
+	return []string{i18n.T("RoutingModeFull"), i18n.T("RoutingModeSplit"), i18n.T("RoutingModeCustom")}
+}
+
+// codeIndex returns the position of code in codes, or 0 if not found.
+func codeIndex(codes []string, code string) int {
+	for i, c := range codes {
+		if c == code {
+			return i
+		}
+	}
+	return 0
+}
+
+// selectedCode returns the enum code for the given dropdown index.
+func selectedCode(codes []string, idx int) string {
+	if idx < 0 || idx >= len(codes) {
+		return codes[0]
+	}
+	return codes[idx]
+}
 
 // showProfileDialog displays an add/edit dialog for a server profile.
 // If editing is nil, a new profile is created.
@@ -20,46 +55,47 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 	serverEntry := widget.NewEntry()
 	userEntry := widget.NewEntry()
 	passEntry := widget.NewPasswordEntry()
-	authSelect := widget.NewSelect([]string{"both", "jwt", "password"}, nil)
-	routeSelect := widget.NewSelect([]string{"full", "split", "custom"}, nil)
+	authSelect := widget.NewSelect(authModeLabels(), nil)
+	routeSelect := widget.NewSelect(routeModeLabels(), nil)
 	cidrEntry := widget.NewMultiLineEntry()
-	cidrEntry.SetPlaceHolder("10.0.0.0/8, 172.16.0.0/12")
+	cidrEntry.SetPlaceHolder(i18n.T("PlaceholderCIDRs"))
 	mtuEntry := widget.NewEntry()
-	mtuEntry.SetPlaceHolder("0 = use server MTU")
+	mtuEntry.SetPlaceHolder(i18n.T("PlaceholderMTU"))
 
 	if !isNew {
 		nameEntry.SetText(editing.Name)
 		serverEntry.SetText(editing.ServerURL)
 		userEntry.SetText(editing.Username)
-		authSelect.SetSelected(string(editing.AuthMode))
-		routeSelect.SetSelected(string(editing.RoutingMode))
+		authSelect.SetSelectedIndex(codeIndex(authCodes, string(editing.AuthMode)))
+		routeSelect.SetSelectedIndex(codeIndex(routeCodes, string(editing.RoutingMode)))
 		cidrEntry.SetText(editing.CustomCIDRs)
 		mtuEntry.SetText(fmtInt(editing.MTUOverride))
-		passEntry.SetPlaceHolder("(unchanged)")
+		passEntry.SetPlaceHolder(i18n.T("PlaceholderPasswordUnchanged"))
 	} else {
-		authSelect.SetSelected(string(model.AuthModeBoth))
-		routeSelect.SetSelected(string(model.RoutingFull))
+		authSelect.SetSelectedIndex(codeIndex(authCodes, string(model.AuthModeBoth)))
+		routeSelect.SetSelectedIndex(codeIndex(routeCodes, string(model.RoutingFull)))
 		mtuEntry.SetText("0")
 	}
 
 	form := container.NewVBox(
-		widget.NewLabel("Name"), nameEntry,
-		widget.NewLabel("Server URL"), serverEntry,
-		widget.NewLabel("Username"), userEntry,
-		widget.NewLabel("Password"), passEntry,
-		widget.NewLabel("Auth Mode"), authSelect,
-		widget.NewLabel("Routing Mode"), routeSelect,
-		widget.NewLabel("Custom CIDRs (comma-separated)"), cidrEntry,
-		widget.NewLabel("MTU Override"), mtuEntry,
+		widget.NewLabel(i18n.T("FieldName")), nameEntry,
+		widget.NewLabel(i18n.T("FieldServerURL")), serverEntry,
+		widget.NewLabel(i18n.T("FieldUsername")), userEntry,
+		widget.NewLabel(i18n.T("FieldPassword")), passEntry,
+		widget.NewLabel(i18n.T("FieldAuthMode")), authSelect,
+		widget.NewLabel(i18n.T("FieldRoutingMode")), routeSelect,
+		widget.NewLabel(i18n.T("FieldCustomCIDRs")), cidrEntry,
+		widget.NewLabel(i18n.T("FieldMTUOverride")), mtuEntry,
 	)
 
-	d := dialog.NewCustomConfirm("Profile", "Save", "Cancel", form, func(save bool) {
+	d := dialog.NewCustomConfirm(i18n.T("DlgProfileTitle"), i18n.T("BtnSave"), i18n.T("BtnCancel"), form, func(save bool) {
 		if !save {
 			return
 		}
 		a.saveProfile(editing, nameEntry.Text, serverEntry.Text,
 			userEntry.Text, passEntry.Text,
-			authSelect.Selected, routeSelect.Selected,
+			selectedCode(authCodes, authSelect.SelectedIndex()),
+			selectedCode(routeCodes, routeSelect.SelectedIndex()),
 			cidrEntry.Text, mtuEntry.Text, isNew)
 	}, a.window)
 	d.Resize(fyne.NewSize(400, 500))
@@ -70,7 +106,7 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 func (a *App) saveProfile(editing *model.ServerProfile,
 	name, server, user, password, authMode, routeMode, cidrs, mtuStr string, isNew bool) {
 	if name == "" || server == "" || user == "" {
-		showError("Validation", "Name, Server URL, and Username are required.", a.window)
+		showError(i18n.T("DlgValidationTitle"), i18n.T("DlgValidationMsg"), a.window)
 		return
 	}
 
@@ -88,13 +124,13 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 		}
 		id, err := a.db.CreateProfile(p)
 		if err != nil {
-			showError("Save Error", err.Error(), a.window)
+			showError(i18n.T("DlgSaveError"), err.Error(), a.window)
 			return
 		}
 		_ = id
 		if password != "" {
 			if err := a.kc.SetPassword(name, password); err != nil {
-				showError("Keychain Error", err.Error(), a.window)
+				showError(i18n.T("DlgKeychainError"), err.Error(), a.window)
 			}
 		}
 	} else {
@@ -107,13 +143,13 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 		editing.CustomCIDRs = cidrs
 		editing.MTUOverride = mtu
 		if err := a.db.UpdateProfile(editing); err != nil {
-			showError("Save Error", err.Error(), a.window)
+			showError(i18n.T("DlgSaveError"), err.Error(), a.window)
 			return
 		}
 		if password != "" {
 			_ = a.kc.DeleteAll(oldName)
 			if err := a.kc.SetPassword(name, password); err != nil {
-				showError("Keychain Error", err.Error(), a.window)
+				showError(i18n.T("DlgKeychainError"), err.Error(), a.window)
 			}
 		}
 	}

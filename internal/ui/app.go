@@ -5,6 +5,7 @@ import (
 
 	"lmvpn/internal/config"
 	"lmvpn/internal/db"
+	"lmvpn/internal/i18n"
 	"lmvpn/internal/ipc"
 	"lmvpn/internal/keychain"
 	"lmvpn/internal/log"
@@ -39,6 +40,7 @@ type App struct {
 	ipcClient      *ipc.Client
 	profiles       []model.ServerProfile
 	currentProfile *model.ServerProfile
+	langSetting    string
 }
 
 // Run initialises and starts the GUI application.
@@ -60,13 +62,19 @@ func Run() {
 	// Load app config.
 	cfg, _ := config.Load()
 
-	a := &App{
-		fyneApp: app.NewWithID(paths.BundleID),
-		db:      store,
-		kc:      keychain.New(),
+	// Initialise i18n (detect system locale when unset).
+	if err := i18n.Init(cfg.Language); err != nil {
+		log.L().Error("init i18n", "error", err)
 	}
 
-	a.window = a.fyneApp.NewWindow("LMVPN")
+	a := &App{
+		fyneApp:     app.NewWithID(paths.BundleID),
+		db:          store,
+		kc:          keychain.New(),
+		langSetting: cfg.Language,
+	}
+
+	a.window = a.fyneApp.NewWindow(i18n.T("WindowTitle"))
 	a.window.SetContent(a.buildMainWindow())
 	a.window.Resize(fyne.NewSize(420, 480))
 
@@ -141,7 +149,8 @@ func (a *App) onAddProfile() {
 // onEditProfile shows a dialog to edit the current profile.
 func (a *App) onEditProfile() {
 	if a.currentProfile == nil {
-		dialog.ShowInformation("No Profile", "Select a profile to edit.", a.window)
+		dialog.NewCustom(i18n.T("DlgNoProfileTitle"), i18n.T("BtnOK"),
+			widget.NewLabel(i18n.T("DlgNoProfileEditMsg")), a.window).Show()
 		return
 	}
 	p := *a.currentProfile
@@ -154,17 +163,88 @@ func (a *App) onDeleteProfile() {
 		return
 	}
 	name := a.currentProfile.Name
-	dialog.ShowConfirm("Delete Profile",
-		"Delete profile \""+name+"\" and its stored credentials?",
+	dialog.NewCustomConfirm(i18n.T("DlgDeleteProfileTitle"),
+		i18n.T("BtnDelete"), i18n.T("BtnCancel"),
+		widget.NewLabel(i18n.T("DlgDeleteProfileMsg", map[string]interface{}{"name": name})),
 		func(ok bool) {
 			if !ok {
 				return
 			}
 			if err := a.db.DeleteProfile(a.currentProfile.ID); err != nil {
-				showError("Error", err.Error(), a.window)
+				showError(i18n.T("DlgError"), err.Error(), a.window)
 				return
 			}
 			_ = a.kc.DeleteAll(name)
 			a.loadProfiles()
-		}, a.window)
+		}, a.window).Show()
+}
+
+// changeLanguage switches the active language, persists the choice to
+// the config file, and rebuilds the UI so the new strings take effect
+// immediately.
+func (a *App) changeLanguage(lang string) {
+	a.langSetting = lang
+
+	// Persist the choice.
+	cfg, err := config.Load()
+	if err != nil {
+		cfg = config.Default()
+	}
+	cfg.Language = lang
+	if err := config.Save(cfg); err != nil {
+		log.L().Error("save config", "error", err)
+	}
+
+	// Switch the active localizer.
+	i18n.SetLanguage(lang)
+
+	// Rebuild everything that holds cached strings.
+	a.rebuildUI()
+}
+
+// rebuildUI recreates the main window content and system tray menu so
+// that all labels pick up the currently active language. It preserves
+// the selected profile and connection state across the rebuild.
+func (a *App) rebuildUI() {
+	// Snapshot the state we need to restore.
+	a.mu.Lock()
+	wasConnected := a.ipcClient != nil
+	a.mu.Unlock()
+
+	selectedName := ""
+	if a.currentProfile != nil {
+		selectedName = a.currentProfile.Name
+	}
+
+	// Rebuild window content (creates fresh widgets with new strings).
+	a.window.SetTitle(i18n.T("WindowTitle"))
+	a.window.SetContent(a.buildMainWindow())
+
+	// Restore profiles and the previous selection.
+	if a.db != nil {
+		a.loadProfiles()
+		if selectedName != "" {
+			for _, name := range a.profileSelect.Options {
+				if name == selectedName {
+					a.profileSelect.SetSelected(selectedName)
+					a.selectProfileByName(selectedName)
+					break
+				}
+			}
+		}
+	}
+
+	// Restore connection state.
+	if wasConnected {
+		a.connectBtn.Disable()
+		a.disconnectBtn.Enable()
+		a.stateLabel.SetText(i18n.T("StateConnected"))
+	} else {
+		a.connectBtn.Enable()
+		a.disconnectBtn.Disable()
+		a.stateLabel.SetText(i18n.T("StateDisconnected"))
+	}
+
+	// Rebuild the tray menu (new labels + checked language item).
+	a.setupTray()
 }

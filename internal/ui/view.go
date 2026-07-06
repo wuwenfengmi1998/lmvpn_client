@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"lmvpn/internal/i18n"
 	"lmvpn/internal/ipc"
 	"lmvpn/internal/stats"
 
@@ -15,7 +16,7 @@ import (
 
 // showError displays a titled error dialog.
 func showError(title, message string, parent fyne.Window) {
-	dialog.NewCustom(title, "OK", widget.NewLabel(message), parent).Show()
+	dialog.NewCustom(title, i18n.T("BtnOK"), widget.NewLabel(message), parent).Show()
 }
 
 // buildMainWindow creates the main application window layout.
@@ -26,14 +27,14 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 	})
 
 	// Status display.
-	a.stateLabel = widget.NewLabel("Disconnected")
+	a.stateLabel = widget.NewLabel(i18n.T("StateDisconnected"))
 	a.stateLabel.TextStyle = fyne.TextStyle{Bold: true}
-	a.ipLabel = widget.NewLabel("IP: —")
-	a.uptimeLabel = widget.NewLabel("Uptime: —")
-	a.rxLabel = widget.NewLabel("↓ 0 B")
-	a.txLabel = widget.NewLabel("↑ 0 B")
+	a.ipLabel = widget.NewLabel(i18n.T("IpNone"))
+	a.uptimeLabel = widget.NewLabel(i18n.T("UptimeNone"))
+	a.rxLabel = widget.NewLabel(i18n.T("RxZero"))
+	a.txLabel = widget.NewLabel(i18n.T("TxZero"))
 
-	statusCard := widget.NewCard("Status", "", container.NewVBox(
+	statusCard := widget.NewCard(i18n.T("StatusLabel"), "", container.NewVBox(
 		a.stateLabel,
 		a.ipLabel,
 		a.uptimeLabel,
@@ -41,14 +42,14 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 	))
 
 	// Buttons.
-	a.connectBtn = widget.NewButton("Connect", a.onConnect)
+	a.connectBtn = widget.NewButton(i18n.T("BtnConnect"), a.onConnect)
 	a.connectBtn.Importance = widget.HighImportance
-	a.disconnectBtn = widget.NewButton("Disconnect", a.onDisconnect)
+	a.disconnectBtn = widget.NewButton(i18n.T("BtnDisconnect"), a.onDisconnect)
 	a.disconnectBtn.Disable()
 
-	addBtn := widget.NewButton("Add Profile", a.onAddProfile)
-	editBtn := widget.NewButton("Edit", a.onEditProfile)
-	deleteBtn := widget.NewButton("Delete", a.onDeleteProfile)
+	addBtn := widget.NewButton(i18n.T("BtnAddProfile"), a.onAddProfile)
+	editBtn := widget.NewButton(i18n.T("BtnEdit"), a.onEditProfile)
+	deleteBtn := widget.NewButton(i18n.T("BtnDelete"), a.onDeleteProfile)
 
 	buttons := container.NewGridWithColumns(2,
 		a.connectBtn, a.disconnectBtn,
@@ -58,7 +59,7 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 	)
 
 	return container.NewVBox(
-		widget.NewLabel("Profile"),
+		widget.NewLabel(i18n.T("ProfileLabel")),
 		a.profileSelect,
 		buttons,
 		profileButtons,
@@ -69,20 +70,20 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 // onConnect handles the Connect button click.
 func (a *App) onConnect() {
 	if a.currentProfile == nil {
-		showError("No Profile", "Please select or create a profile first.", a.window)
+		showError(i18n.T("DlgNoProfileTitle"), i18n.T("DlgNoProfileConnectMsg"), a.window)
 		return
 	}
 
 	a.connectBtn.Disable()
-	a.stateLabel.SetText("Connecting...")
+	a.stateLabel.SetText(i18n.T("StateConnecting"))
 
 	go func() {
 		// Ensure daemon is running.
 		client, err := ensureDaemon()
 		if err != nil {
 			fyne.Do(func() {
-				showError("Daemon Error", err.Error(), a.window)
-				a.stateLabel.SetText("Disconnected")
+				showError(i18n.T("DlgDaemonError"), err.Error(), a.window)
+				a.stateLabel.SetText(i18n.T("StateDisconnected"))
 				a.connectBtn.Enable()
 			})
 			return
@@ -96,10 +97,10 @@ func (a *App) onConnect() {
 		password, err := a.kc.GetPassword(a.currentProfile.Name)
 		if err != nil {
 			fyne.Do(func() {
-				showError("Credential Error",
-					"No password stored for this profile. Edit the profile to set it.",
+				showError(i18n.T("DlgCredentialError"),
+					i18n.T("DlgCredentialErrorMsg"),
 					a.window)
-				a.stateLabel.SetText("Disconnected")
+				a.stateLabel.SetText(i18n.T("StateDisconnected"))
 				a.connectBtn.Enable()
 			})
 			return
@@ -117,8 +118,8 @@ func (a *App) onConnect() {
 		}
 		if err := ipc.SendStart(client, cfg); err != nil {
 			fyne.Do(func() {
-				showError("IPC Error", err.Error(), a.window)
-				a.stateLabel.SetText("Disconnected")
+				showError(i18n.T("DlgIPCError"), err.Error(), a.window)
+				a.stateLabel.SetText(i18n.T("StateDisconnected"))
 				a.connectBtn.Enable()
 			})
 			return
@@ -140,7 +141,7 @@ func (a *App) onDisconnect() {
 	_ = ipc.SendStop(client)
 	a.disconnectBtn.Disable()
 	a.connectBtn.Enable()
-	a.stateLabel.SetText("Disconnected")
+	a.stateLabel.SetText(i18n.T("StateDisconnected"))
 }
 
 // eventLoop reads IPC events from the daemon and updates the UI.
@@ -155,11 +156,11 @@ func (a *App) eventLoop() {
 		ev, err := client.Recv()
 		if err != nil {
 			fyne.Do(func() {
-				a.stateLabel.SetText("Disconnected")
-				a.ipLabel.SetText("IP: —")
-				a.uptimeLabel.SetText("Uptime: —")
-				a.rxLabel.SetText("↓ 0 B")
-				a.txLabel.SetText("↑ 0 B")
+				a.stateLabel.SetText(i18n.T("StateDisconnected"))
+				a.ipLabel.SetText(i18n.T("IpNone"))
+				a.uptimeLabel.SetText(i18n.T("UptimeNone"))
+				a.rxLabel.SetText(i18n.T("RxZero"))
+				a.txLabel.SetText(i18n.T("TxZero"))
 				a.connectBtn.Enable()
 				a.disconnectBtn.Disable()
 			})
@@ -180,7 +181,7 @@ func (a *App) eventLoop() {
 		case ipc.EvError:
 			fyne.Do(func() {
 				if ev.Message != "" {
-					showError("VPN Error", ev.Message, a.window)
+					showError(i18n.T("DlgVPNError"), ev.Message, a.window)
 				}
 			})
 		}
@@ -191,23 +192,23 @@ func (a *App) eventLoop() {
 func (a *App) applyState(state string) {
 	switch stats.State(state) {
 	case stats.StateConnected:
-		a.stateLabel.SetText("Connected")
+		a.stateLabel.SetText(i18n.T("StateConnected"))
 		a.connectBtn.Disable()
 		a.disconnectBtn.Enable()
 	case stats.StateConnecting:
-		a.stateLabel.SetText("Connecting...")
+		a.stateLabel.SetText(i18n.T("StateConnecting"))
 		a.connectBtn.Disable()
 		a.disconnectBtn.Enable()
 	case stats.StateReconnecting:
-		a.stateLabel.SetText("Reconnecting...")
+		a.stateLabel.SetText(i18n.T("StateReconnecting"))
 		a.disconnectBtn.Enable()
 	case stats.StateDisconnected:
-		a.stateLabel.SetText("Disconnected")
-		a.ipLabel.SetText("IP: —")
+		a.stateLabel.SetText(i18n.T("StateDisconnected"))
+		a.ipLabel.SetText(i18n.T("IpNone"))
 		a.connectBtn.Enable()
 		a.disconnectBtn.Disable()
 	case stats.StateError:
-		a.stateLabel.SetText("Error")
+		a.stateLabel.SetText(i18n.T("StateError"))
 		a.connectBtn.Enable()
 		a.disconnectBtn.Disable()
 	}
@@ -216,15 +217,15 @@ func (a *App) applyState(state string) {
 // applyStats updates the stats display.
 func (a *App) applyStats(s stats.Snapshot) {
 	if s.AssignedIP != "" {
-		a.ipLabel.SetText("IP: " + s.AssignedIP)
+		a.ipLabel.SetText(i18n.T("IpLabel", map[string]interface{}{"ip": s.AssignedIP}))
 	}
 	if s.State == stats.StateConnected {
-		a.stateLabel.SetText("Connected")
+		a.stateLabel.SetText(i18n.T("StateConnected"))
 	}
-	a.rxLabel.SetText("↓ " + formatBytes(s.RxBytes))
-	a.txLabel.SetText("↑ " + formatBytes(s.TxBytes))
+	a.rxLabel.SetText(i18n.T("RxLabel", map[string]interface{}{"bytes": formatBytes(s.RxBytes)}))
+	a.txLabel.SetText(i18n.T("TxLabel", map[string]interface{}{"bytes": formatBytes(s.TxBytes)}))
 	if s.Uptime > 0 {
-		a.uptimeLabel.SetText("Uptime: " + formatDuration(s.Uptime))
+		a.uptimeLabel.SetText(i18n.T("UptimeLabel", map[string]interface{}{"uptime": formatDuration(s.Uptime)}))
 	}
 }
 
