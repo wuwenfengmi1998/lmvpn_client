@@ -9,6 +9,16 @@ import (
 
 func init() {
 	home, _ := os.UserHomeDir()
+	recomputePaths(home)
+}
+
+// recomputePaths sets Paths based on the given home directory.
+// On macOS the layout is:
+//
+//	<home>/Library/Application Support/<BundleID>/  data
+//	<home>/Library/Caches/<BundleID>/               cache
+//	<home>/Library/Logs/<BundleID>/                 logs
+func recomputePaths(home string) {
 	lib := filepath.Join(home, "Library")
 	Paths = Dirs{
 		Data:  filepath.Join(lib, "Application Support", BundleID),

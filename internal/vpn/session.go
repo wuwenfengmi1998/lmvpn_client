@@ -188,11 +188,17 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig) er
 	// Attempt JWT connection first; fall back to password on auth error.
 	conn, err := transport.Connect(ctx, handshake)
 	if err != nil {
-		var authErr *transport.AuthError
-		if errors.As(err, &authErr) && cfg.AuthMode == model.AuthModeBoth && token != "" {
-			// Retry with password auth (no token).
-			handshake.Token = ""
-			conn, err = transport.Connect(ctx, handshake)
+		if cfg.AuthMode == model.AuthModeBoth && token != "" {
+			// JWT failure can surface as AuthError (password-auth path)
+			// or ServerError with Type=auth_err (JWT rejected at /ws).
+			var authErr *transport.AuthError
+			var serverErr *transport.ServerError
+			if errors.As(err, &authErr) ||
+				(errors.As(err, &serverErr) && serverErr.Type == protocol.TypeAuthErr) {
+				log.L().Info("JWT auth failed, falling back to password auth", "error", err)
+				handshake.Token = ""
+				conn, err = transport.Connect(ctx, handshake)
+			}
 		}
 		if err != nil {
 			return err

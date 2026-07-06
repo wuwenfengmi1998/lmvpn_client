@@ -2,7 +2,8 @@
 
 APP_NAME    = LMVPN
 BUNDLE_ID   = com.lmvpn.client
-BINARY      = lmvpn
+GUI_BIN     = lmvpn
+DAEMON_BIN  = lmvpnd
 BUILD_DIR   = build
 APP_BUNDLE  = $(APP_NAME).app
 
@@ -10,22 +11,24 @@ GO          = go
 CGO_ENABLED = 1
 LDFLAGS     = -s -w
 
-.PHONY: all build app run daemon clean vet tidy fmt
+.PHONY: all build app run daemon clean vet tidy fmt icon
 
 ## all: build the .app bundle (default)
 all: app
 
-## build: compile the binary
+## build: compile both the GUI and daemon binaries
 build:
 	mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=$(CGO_ENABLED) $(GO) build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) .
+	CGO_ENABLED=$(CGO_ENABLED) $(GO) build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(GUI_BIN) ./cmd/lmvpn
+	CGO_ENABLED=$(CGO_ENABLED) $(GO) build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(DAEMON_BIN) ./cmd/lmvpnd
 
-## app: build binary and assemble .app bundle
+## app: build binaries and assemble .app bundle
 app: build
 	rm -rf $(APP_BUNDLE)
 	mkdir -p $(APP_BUNDLE)/Contents/MacOS
 	mkdir -p $(APP_BUNDLE)/Contents/Resources
-	cp $(BUILD_DIR)/$(BINARY) $(APP_BUNDLE)/Contents/MacOS/$(BINARY)
+	cp $(BUILD_DIR)/$(GUI_BIN) $(APP_BUNDLE)/Contents/MacOS/$(GUI_BIN)
+	cp $(BUILD_DIR)/$(DAEMON_BIN) $(APP_BUNDLE)/Contents/MacOS/$(DAEMON_BIN)
 	cp resources/Info.plist $(APP_BUNDLE)/Contents/Info.plist
 	@if [ -f resources/icon.icns ]; then \
 		cp resources/icon.icns $(APP_BUNDLE)/Contents/Resources/icon.icns; \
@@ -50,11 +53,11 @@ icon:
 
 ## run: build and run the GUI
 run: build
-	./$(BUILD_DIR)/$(BINARY)
+	./$(BUILD_DIR)/$(GUI_BIN)
 
-## daemon: run the daemon (needs root)
+## daemon: run the daemon directly (needs root)
 daemon: build
-	sudo ./$(BUILD_DIR)/$(BINARY) daemon
+	sudo ./$(BUILD_DIR)/$(DAEMON_BIN)
 
 ## vet: run go vet
 vet:

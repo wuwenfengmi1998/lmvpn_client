@@ -6,6 +6,11 @@
 // The daemon is launched (as root) by the GUI via osascript. It holds
 // no persistent state — all configuration is provided by the GUI in
 // the Start command.
+//
+// The daemon accepts --user-home, --uid, and --gid flags so it can:
+//   - Write logs to the user's ~/Library/Logs/ (not /var/root)
+//   - Chown the IPC socket so the user can connect
+//   - Chown log files so the user can read them
 package daemon
 
 import (
@@ -26,15 +31,36 @@ import (
 
 // Run starts the daemon and blocks until Shutdown is received or a
 // signal (SIGINT/SIGTERM) is delivered.
-func Run() error {
+//
+// userHome, uid, gid are the invoking GUI user's home directory and
+// IDs, used to place logs in the user's Library and chown the IPC
+// socket so the non-root GUI can connect.
+func Run(userHome string, uid, gid int) error {
+	// Override paths to use the user's home directory (not root's).
+	paths.SetUserHome(userHome)
+	if err := paths.EnsureDirs(); err != nil {
+		// Non-fatal: root can usually create these anyway.
+		fmt.Fprintf(os.Stderr, "ensure dirs: %v\n", err)
+	}
+
 	log.Init(log.RoleDaemon, paths.DaemonLogFile())
-	log.L().Info("lmvpn daemon starting")
+	// Chown the daemon log file so the user can read it.
+	chownToUser(paths.DaemonLogFile(), uid, gid)
+
+	log.L().Info("lmvpn daemon starting",
+		"user_home", userHome, "uid", uid, "gid", gid)
 
 	server, err := ipc.NewServer()
 	if err != nil {
 		return fmt.Errorf("ipc server: %w", err)
 	}
 	defer server.Close()
+
+	// Chown the IPC socket so the non-root GUI process can connect.
+	// This is the critical fix: without it, the socket is owned by
+	// root:wheel with mode 0660, and the user cannot dial it.
+	chownToUser(paths.IPCSocketPath(), uid, gid)
+	log.L().Info("daemon listening", "socket", paths.IPCSocketPath())
 
 	d := &daemon{server: server}
 
@@ -49,8 +75,18 @@ func Run() error {
 		os.Exit(0)
 	}()
 
-	log.L().Info("daemon listening", "socket", paths.IPCSocketPath())
 	return server.Accept(d.handle)
+}
+
+// chownToUser changes the ownership of a file to the given uid:gid.
+// Errors are logged but not fatal (e.g. if uid is -1).
+func chownToUser(path string, uid, gid int) {
+	if uid < 0 {
+		return
+	}
+	if err := os.Chown(path, uid, gid); err != nil {
+		log.L().Warn("chown failed", "path", path, "error", err)
+	}
 }
 
 type daemon struct {

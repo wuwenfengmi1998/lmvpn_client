@@ -26,6 +26,15 @@ type Dirs struct {
 // Paths is the resolved directory set for the current platform.
 var Paths Dirs
 
+// SetUserHome overrides the home directory used to compute Paths.
+// This is used by the daemon (which runs as root) to write logs and
+// data to the invoking user's Library folders instead of /var/root.
+func SetUserHome(home string) {
+	if home != "" {
+		recomputePaths(home)
+	}
+}
+
 // EnsureDirs creates the application directories if they do not exist.
 func EnsureDirs() error {
 	for _, d := range []string{Paths.Data, Paths.Cache, Paths.Log} {

@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -255,13 +256,14 @@ func (e *ServerError) Error() string {
 	return fmt.Sprintf("server %s: %s", e.Type, e.Message)
 }
 
-// appendQuery appends a key=value parameter to a URL.
-func appendQuery(url, key, value string) string {
+// appendQuery appends a key=value parameter to a URL, with the value
+// properly URL-escaped.
+func appendQuery(rawURL, key, value string) string {
 	sep := "?"
-	if contains(url, "?") {
+	if contains(rawURL, "?") {
 		sep = "&"
 	}
-	return url + sep + key + "=" + value
+	return rawURL + sep + key + "=" + url.QueryEscape(value)
 }
 
 func contains(s, sub string) bool {
