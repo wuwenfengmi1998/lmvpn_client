@@ -75,6 +75,7 @@ func (a *App) onConnect() {
 	}
 
 	a.connectBtn.Disable()
+	a.disconnectBtn.Enable()
 	a.stateLabel.SetText(i18n.T("StateConnecting"))
 
 	go func() {
@@ -85,6 +86,7 @@ func (a *App) onConnect() {
 				showError(i18n.T("DlgDaemonError"), err.Error(), a.window)
 				a.stateLabel.SetText(i18n.T("StateDisconnected"))
 				a.connectBtn.Enable()
+				a.disconnectBtn.Disable()
 			})
 			return
 		}
@@ -102,6 +104,7 @@ func (a *App) onConnect() {
 					a.window)
 				a.stateLabel.SetText(i18n.T("StateDisconnected"))
 				a.connectBtn.Enable()
+				a.disconnectBtn.Disable()
 			})
 			return
 		}
@@ -121,6 +124,7 @@ func (a *App) onConnect() {
 				showError(i18n.T("DlgIPCError"), err.Error(), a.window)
 				a.stateLabel.SetText(i18n.T("StateDisconnected"))
 				a.connectBtn.Enable()
+				a.disconnectBtn.Disable()
 			})
 			return
 		}
@@ -146,23 +150,29 @@ func (a *App) onDisconnect() {
 
 // eventLoop reads IPC events from the daemon and updates the UI.
 func (a *App) eventLoop() {
+	a.mu.Lock()
+	client := a.ipcClient
+	a.mu.Unlock()
+	if client == nil {
+		return
+	}
+
 	for {
-		a.mu.Lock()
-		client := a.ipcClient
-		a.mu.Unlock()
-		if client == nil {
-			return
-		}
 		ev, err := client.Recv()
 		if err != nil {
 			fyne.Do(func() {
-				a.stateLabel.SetText(i18n.T("StateDisconnected"))
-				a.ipLabel.SetText(i18n.T("IpNone"))
-				a.uptimeLabel.SetText(i18n.T("UptimeNone"))
-				a.rxLabel.SetText(i18n.T("RxZero"))
-				a.txLabel.SetText(i18n.T("TxZero"))
-				a.connectBtn.Enable()
-				a.disconnectBtn.Disable()
+				a.mu.Lock()
+				current := a.ipcClient
+				a.mu.Unlock()
+				if current == client {
+					a.stateLabel.SetText(i18n.T("StateDisconnected"))
+					a.ipLabel.SetText(i18n.T("IpNone"))
+					a.uptimeLabel.SetText(i18n.T("UptimeNone"))
+					a.rxLabel.SetText(i18n.T("RxZero"))
+					a.txLabel.SetText(i18n.T("TxZero"))
+					a.connectBtn.Enable()
+					a.disconnectBtn.Disable()
+				}
 			})
 			return
 		}
@@ -201,6 +211,7 @@ func (a *App) applyState(state string) {
 		a.disconnectBtn.Enable()
 	case stats.StateReconnecting:
 		a.stateLabel.SetText(i18n.T("StateReconnecting"))
+		a.connectBtn.Disable()
 		a.disconnectBtn.Enable()
 	case stats.StateDisconnected:
 		a.stateLabel.SetText(i18n.T("StateDisconnected"))

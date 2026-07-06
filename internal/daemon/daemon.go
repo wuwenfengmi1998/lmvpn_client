@@ -155,7 +155,6 @@ func (d *daemon) startSession(conn net.Conn, req ipc.Request) {
 		d.session = nil
 		return
 	}
-	_ = ipc.WriteOK(conn)
 }
 
 func (d *daemon) stopSession() {
