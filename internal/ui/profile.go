@@ -114,7 +114,7 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 		profileWin.Close()
 	})
 
-	profileWin.SetContent(container.NewBorder(nil, container.NewHBox(saveBtn, cancelBtn), nil, nil, container.NewScroll(form)))
+	profileWin.SetContent(container.NewBorder(nil, container.NewHBox(saveBtn, cancelBtn), nil, nil, form))
 	profileWin.Resize(fyne.NewSize(460, 560))
 	profileWin.Show()
 }
