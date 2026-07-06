@@ -29,3 +29,5 @@ Thumbs.db
 
 # Fyne cache
 /.fyne/
+
+build/
