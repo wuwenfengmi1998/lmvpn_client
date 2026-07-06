@@ -1,0 +1,31 @@
+# Binaries
+/lmvpn
+/lmvpn.exe
+/bin/
+/dist/
+
+# Build artifacts
+*.app
+*.dmg
+*.exe
+
+# Go
+/vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local data (never commit runtime files)
+/data/
+*.db
+*.db-journal
+*.log
+
+# Fyne cache
+/.fyne/
