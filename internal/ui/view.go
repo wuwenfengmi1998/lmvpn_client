@@ -67,6 +67,7 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 		profileButtons,
 		resetDBBtn,
 		statusCard,
+		widget.NewLabel(fmt.Sprintf("v%s", Version)),
 	)
 }
 
