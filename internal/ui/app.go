@@ -122,6 +122,10 @@ func (a *App) loadProfiles() {
 	if len(names) > 0 {
 		a.profileSelect.SetSelectedIndex(0)
 		a.selectProfileByName(names[0])
+	} else {
+		a.currentProfile = nil
+		a.profileSelect.SetSelected("")
+		a.profileSelect.Refresh()
 	}
 }
 
