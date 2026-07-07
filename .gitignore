@@ -8,6 +8,8 @@
 *.app
 *.dmg
 *.exe
+*.syso
+resources/icon.ico
 
 # Go
 /vendor/

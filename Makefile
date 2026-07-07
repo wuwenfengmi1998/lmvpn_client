@@ -10,10 +10,10 @@ APP_BUNDLE  = $(APP_NAME).app
 GO          = go
 CGO_ENABLED = 1
 GIT_HASH    = $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
-VERSION     = 0.3.5-$(GIT_HASH)
+VERSION     = 0.3.6-$(GIT_HASH)
 LDFLAGS     = -s -w -X lmvpn/internal/version.Version=$(VERSION)
 
-.PHONY: all build app run daemon clean vet tidy fmt icon build-windows
+.PHONY: all build app run daemon clean vet tidy fmt icon icon-windows build-windows
 
 ## all: build the .app bundle (default)
 all: app
@@ -81,8 +81,15 @@ fmt:
 clean:
 	rm -rf $(BUILD_DIR) $(APP_BUNDLE)
 
+## icon-windows: generate icon.ico and compile Windows resource (.syso)
+icon-windows:
+	go run resources/genico/main.go
+	x86_64-w64-mingw32-windres -i resources/lmvpn.rc -O coff -o cmd/lmvpn/resource_windows_amd64.syso
+	x86_64-w64-mingw32-windres -i resources/lmvpn.rc -O coff -o cmd/lmvpnd/resource_windows_amd64.syso
+	@echo "Generated Windows icon resources"
+
 ## build-windows: cross-compile Windows x86_64 exes (requires mingw-w64)
-build-windows:
+build-windows: icon-windows
 	mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
 		$(GO) build -ldflags "$(LDFLAGS) -H windowsgui" -o $(BUILD_DIR)/$(GUI_BIN).exe ./cmd/lmvpn
