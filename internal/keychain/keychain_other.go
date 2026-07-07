@@ -1,8 +1,11 @@
-//go:build !darwin
+//go:build !darwin && !windows
 
 package keychain
 
-// MemStore is an in-memory fallback used on non-darwin platforms.
+// MemStore is an in-memory fallback used on non-darwin, non-windows
+// platforms (currently Linux). Passwords do not persist across
+// restarts; a platform-appropriate backend (e.g. Secret Service)
+// should be added for production use.
 type MemStore struct {
 	data map[string]string
 }
