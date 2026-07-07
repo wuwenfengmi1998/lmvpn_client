@@ -26,10 +26,10 @@ func createTUN(name string) (Device, error) {
 	return &darwinDevice{ifce: ifce}, nil
 }
 
-func (d *darwinDevice) Name() string                  { return d.ifce.Name() }
-func (d *darwinDevice) Read(p []byte) (int, error)    { return d.ifce.Read(p) }
-func (d *darwinDevice) Write(p []byte) (int, error)   { return d.ifce.Write(p) }
-func (d *darwinDevice) Close() error                  { return d.ifce.Close() }
+func (d *darwinDevice) Name() string                { return d.ifce.Name() }
+func (d *darwinDevice) Read(p []byte) (int, error)  { return d.ifce.Read(p) }
+func (d *darwinDevice) Write(p []byte) (int, error) { return d.ifce.Write(p) }
+func (d *darwinDevice) Close() error                { return d.ifce.Close() }
 
 func (d *darwinDevice) Configure(localIP net.IP, prefix int, peerIP net.IP) error {
 	if localIP == nil {
@@ -42,6 +42,16 @@ func (d *darwinDevice) Configure(localIP net.IP, prefix int, peerIP net.IP) erro
 	localCidr := fmt.Sprintf("%s/%d", localIP.String(), prefix)
 	// ifconfig utunN inet <ip>/<prefix> <peer_ip> up
 	return execCmd("ifconfig", d.Name(), inetType, localCidr, peerIP.String(), "up")
+}
+
+func (d *darwinDevice) ConfigureIPv6(localIP6 net.IP, prefix6 int) error {
+	if localIP6 == nil {
+		return nil
+	}
+	// macOS utun IPv6 uses the plain address form (no peer aliasing):
+	//   ifconfig utunN inet6 <ip6>/<prefix6> up
+	localCidr := fmt.Sprintf("%s/%d", localIP6.String(), prefix6)
+	return execCmd("ifconfig", d.Name(), "inet6", localCidr, "up")
 }
 
 func (d *darwinDevice) SetMTU(mtu int) error {

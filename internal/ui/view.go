@@ -30,6 +30,7 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 	a.stateLabel = widget.NewLabel(i18n.T("StateDisconnected"))
 	a.stateLabel.TextStyle = fyne.TextStyle{Bold: true}
 	a.ipLabel = widget.NewLabel(i18n.T("IpNone"))
+	a.ip6Label = widget.NewLabel(i18n.T("Ip6None"))
 	a.uptimeLabel = widget.NewLabel(i18n.T("UptimeNone"))
 	a.rxLabel = widget.NewLabel(i18n.T("RxZero"))
 	a.txLabel = widget.NewLabel(i18n.T("TxZero"))
@@ -37,6 +38,7 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 	statusCard := widget.NewCard(i18n.T("StatusLabel"), "", container.NewVBox(
 		a.stateLabel,
 		a.ipLabel,
+		a.ip6Label,
 		a.uptimeLabel,
 		container.NewHBox(a.rxLabel, a.txLabel),
 	))
@@ -181,6 +183,7 @@ func (a *App) eventLoop() {
 				if current == client {
 					a.stateLabel.SetText(i18n.T("StateDisconnected"))
 					a.ipLabel.SetText(i18n.T("IpNone"))
+					a.ip6Label.SetText(i18n.T("Ip6None"))
 					a.uptimeLabel.SetText(i18n.T("UptimeNone"))
 					a.rxLabel.SetText(i18n.T("RxZero"))
 					a.txLabel.SetText(i18n.T("TxZero"))
@@ -230,6 +233,7 @@ func (a *App) applyState(state string) {
 	case stats.StateDisconnected:
 		a.stateLabel.SetText(i18n.T("StateDisconnected"))
 		a.ipLabel.SetText(i18n.T("IpNone"))
+		a.ip6Label.SetText(i18n.T("Ip6None"))
 		a.connectBtn.Enable()
 		a.disconnectBtn.Disable()
 	case stats.StateError:
@@ -243,6 +247,11 @@ func (a *App) applyState(state string) {
 func (a *App) applyStats(s stats.Snapshot) {
 	if s.AssignedIP != "" {
 		a.ipLabel.SetText(i18n.T("IpLabel", map[string]interface{}{"ip": s.AssignedIP}))
+	}
+	if s.AssignedIP6 != "" {
+		a.ip6Label.SetText(i18n.T("Ip6Label", map[string]interface{}{"ip": s.AssignedIP6}))
+	} else {
+		a.ip6Label.SetText(i18n.T("Ip6None"))
 	}
 	if s.State == stats.StateConnected {
 		a.stateLabel.SetText(i18n.T("StateConnected"))

@@ -19,6 +19,8 @@ BtnCancel = "Cancel"
 BtnOK = "OK"
 
 IpLabel = "IP: {{.ip}}"
+Ip6Label = "IPv6: {{.ip}}"
+Ip6None = "IPv6: —"
 IpNone = "IP: —"
 UptimeLabel = "Uptime: {{.uptime}}"
 UptimeNone = "Uptime: —"

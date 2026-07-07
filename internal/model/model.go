@@ -28,21 +28,21 @@ const (
 
 // ServerProfile is a saved VPN server configuration.
 type ServerProfile struct {
-	ID              int64      `json:"id"`
-	Name            string     `json:"name"`
-	Protocol        string     `json:"protocol"`   // "wss" (default) or "ws"
-	Host            string     `json:"host"`       // hostname for SNI, e.g. vpn.example.com
-	ServerIPs       string     `json:"server_ips"` // comma-separated CDN IPs, first used by default
-	Port            int        `json:"port"`       // default 443
-	Path            string     `json:"path"`       // default "/ws"
-	Username        string     `json:"username"`
-	AuthMode        AuthMode   `json:"auth_mode"`
+	ID              int64       `json:"id"`
+	Name            string      `json:"name"`
+	Protocol        string      `json:"protocol"`   // "wss" (default) or "ws"
+	Host            string      `json:"host"`       // hostname for SNI, e.g. vpn.example.com
+	ServerIPs       string      `json:"server_ips"` // comma-separated CDN IPs, first used by default
+	Port            int         `json:"port"`       // default 443
+	Path            string      `json:"path"`       // default "/ws"
+	Username        string      `json:"username"`
+	AuthMode        AuthMode    `json:"auth_mode"`
 	RoutingMode     RoutingMode `json:"routing_mode"`
-	CustomCIDRs     string     `json:"custom_cidrs"`      // comma-separated, for RoutingCustom
-	MTUOverride     int        `json:"mtu_override"`       // 0 = use server MTU
-	AutoConnect     bool       `json:"auto_connect"`
-	CreatedAt       time.Time  `json:"created_at"`
-	LastConnectedAt *time.Time `json:"last_connected_at"`
+	CustomCIDRs     string      `json:"custom_cidrs"` // comma-separated, for RoutingCustom
+	MTUOverride     int         `json:"mtu_override"` // 0 = use server MTU
+	AutoConnect     bool        `json:"auto_connect"`
+	CreatedAt       time.Time   `json:"created_at"`
+	LastConnectedAt *time.Time  `json:"last_connected_at"`
 }
 
 // BuildServerURL constructs the WebSocket URL from the profile fields.
@@ -108,13 +108,14 @@ const (
 
 // ConnectionLog records a single VPN session.
 type ConnectionLog struct {
-	ID         int64             `json:"id"`
-	ProfileID  int64             `json:"profile_id"`
-	StartedAt  time.Time         `json:"started_at"`
-	EndedAt    *time.Time        `json:"ended_at"`
-	AssignedIP string            `json:"assigned_ip"`
-	RxBytes    int64             `json:"rx_bytes"`
-	TxBytes    int64             `json:"tx_bytes"`
-	Status     ConnectionStatus  `json:"status"`
-	ErrorMsg   string            `json:"error_msg"`
+	ID          int64            `json:"id"`
+	ProfileID   int64            `json:"profile_id"`
+	StartedAt   time.Time        `json:"started_at"`
+	EndedAt     *time.Time       `json:"ended_at"`
+	AssignedIP  string           `json:"assigned_ip"`
+	AssignedIP6 string           `json:"assigned_ip6"`
+	RxBytes     int64            `json:"rx_bytes"`
+	TxBytes     int64            `json:"tx_bytes"`
+	Status      ConnectionStatus `json:"status"`
+	ErrorMsg    string           `json:"error_msg"`
 }

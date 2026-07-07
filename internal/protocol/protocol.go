@@ -21,23 +21,26 @@ const (
 
 // Timeout and limit constants matching the server (tunnel.go:16-23).
 const (
-	ReadTimeout    = 60 * time.Second // post-ready read deadline
-	WriteTimeout   = 10 * time.Second // per-write deadline
-	ReadyTimeout   = 30 * time.Second // client must send ready within this
-	PingPeriod     = 30 * time.Second // server ping interval
-	MaxMessageSize = 1 << 20          // 1 MiB max WebSocket message
-	MaxConnsPerUser = 3               // per-user concurrent connection cap
-	TokenExpiry    = 24 * time.Hour   // JWT validity
+	ReadTimeout     = 60 * time.Second // post-ready read deadline
+	WriteTimeout    = 10 * time.Second // per-write deadline
+	ReadyTimeout    = 30 * time.Second // client must send ready within this
+	PingPeriod      = 30 * time.Second // server ping interval
+	MaxMessageSize  = 1 << 20          // 1 MiB max WebSocket message
+	MaxConnsPerUser = 3                // per-user concurrent connection cap
+	TokenExpiry     = 24 * time.Hour   // JWT validity
 )
 
 // InitMessage is sent by the server after auth + pre-checks pass.
-// (server: protocol.go:3-9, tunnel.go:126-137)
+// (server: protocol.go:3-10, tunnel.go:134-145)
 type InitMessage struct {
-	Type     string `json:"type"`
-	IP       string `json:"ip"`        // assigned client IP (dotted-quad)
-	Prefix   int    `json:"prefix"`    // subnet prefix length (e.g. 24)
-	MTU      int    `json:"mtu"`       // TUN device MTU (e.g. 1420)
-	ServerIP string `json:"server_ip"` // server's tunnel IP (peer/gateway)
+	Type      string `json:"type"`
+	IP        string `json:"ip"`                   // assigned client IPv4 (dotted-quad)
+	Prefix    int    `json:"prefix"`               // IPv4 subnet prefix length (e.g. 24)
+	MTU       int    `json:"mtu"`                  // TUN device MTU (e.g. 1420)
+	ServerIP  string `json:"server_ip"`            // server's tunnel IPv4 (peer/gateway)
+	IP6       string `json:"ip6,omitempty"`        // assigned client IPv6 (only when server has Subnet6)
+	Prefix6   int    `json:"prefix6,omitempty"`    // IPv6 subnet prefix length
+	ServerIP6 string `json:"server_ip6,omitempty"` // server's tunnel IPv6
 }
 
 // ControlMessage is the generic text control message.

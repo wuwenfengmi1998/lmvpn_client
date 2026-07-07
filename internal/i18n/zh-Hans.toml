@@ -19,6 +19,8 @@ BtnCancel = "取消"
 BtnOK = "确定"
 
 IpLabel = "IP: {{.ip}}"
+Ip6Label = "IPv6: {{.ip}}"
+Ip6None = "IPv6: —"
 IpNone = "IP: —"
 UptimeLabel = "运行时长: {{.uptime}}"
 UptimeNone = "运行时长: —"

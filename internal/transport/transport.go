@@ -30,18 +30,18 @@ import (
 
 // HandshakeConfig configures a single connection attempt.
 type HandshakeConfig struct {
-	ServerURL string // e.g. wss://vpn.example.com/ws
-	SNIHost   string // TLS SNI hostname for CDN edge connections
-	Token     string // JWT; if non-empty, used via ?token= (method A)
-	Username  string // for password auth (method B), or fallback
-	Password  string // for password auth (method B), or fallback
+	ServerURL string                           // e.g. wss://vpn.example.com/ws
+	SNIHost   string                           // TLS SNI hostname for CDN edge connections
+	Token     string                           // JWT; if non-empty, used via ?token= (method A)
+	Username  string                           // for password auth (method B), or fallback
+	Password  string                           // for password auth (method B), or fallback
 	OnInit    func(protocol.InitMessage) error // configure TUN; nil = auto-ready
 }
 
 // Conn is an established VPN tunnel connection.
 type Conn struct {
-	ws     *websocket.Conn
-	init   protocol.InitMessage
+	ws      *websocket.Conn
+	init    protocol.InitMessage
 	writeMu sync.Mutex
 	closed  bool
 	mu      sync.Mutex
@@ -235,8 +235,11 @@ func (c *Conn) WritePacket(data []byte) error {
 // Init returns the init message received during handshake.
 func (c *Conn) Init() protocol.InitMessage { return c.init }
 
-// AssignedIP returns the IP assigned by the server.
+// AssignedIP returns the IPv4 assigned by the server.
 func (c *Conn) AssignedIP() string { return c.init.IP }
+
+// AssignedIP6 returns the IPv6 assigned by the server (empty if none).
+func (c *Conn) AssignedIP6() string { return c.init.IP6 }
 
 // Close terminates the connection.
 func (c *Conn) Close() error {

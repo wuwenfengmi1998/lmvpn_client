@@ -21,13 +21,13 @@ func (s *Store) StartLog(profileID int64) (int64, error) {
 }
 
 // FinishLog finalises a connection log entry with final stats.
-func (s *Store) FinishLog(id int64, status model.ConnectionStatus, assignedIP string, rxBytes, txBytes int64, errMsg string) error {
+func (s *Store) FinishLog(id int64, status model.ConnectionStatus, assignedIP, assignedIP6 string, rxBytes, txBytes int64, errMsg string) error {
 	_, err := s.db.Exec(
 		`UPDATE connection_logs SET
-		    ended_at = ?, assigned_ip = ?, rx_bytes = ?, tx_bytes = ?,
+		    ended_at = ?, assigned_ip = ?, assigned_ip6 = ?, rx_bytes = ?, tx_bytes = ?,
 		    status = ?, error_msg = ?
 		 WHERE id = ?`,
-		time.Now(), assignedIP, rxBytes, txBytes, status, errMsg, id)
+		time.Now(), assignedIP, assignedIP6, rxBytes, txBytes, status, errMsg, id)
 	if err != nil {
 		return fmt.Errorf("finish log %d: %w", id, err)
 	}
@@ -37,7 +37,7 @@ func (s *Store) FinishLog(id int64, status model.ConnectionStatus, assignedIP st
 // RecentLogs returns the most recent N connection logs for a profile.
 func (s *Store) RecentLogs(profileID int64, limit int) ([]model.ConnectionLog, error) {
 	rows, err := s.db.Query(
-		`SELECT id, profile_id, started_at, ended_at, assigned_ip,
+		`SELECT id, profile_id, started_at, ended_at, assigned_ip, assigned_ip6,
 		        rx_bytes, tx_bytes, status, error_msg
 		 FROM connection_logs WHERE profile_id = ?
 		 ORDER BY started_at DESC LIMIT ?`,
@@ -52,7 +52,7 @@ func (s *Store) RecentLogs(profileID int64, limit int) ([]model.ConnectionLog, e
 		var l model.ConnectionLog
 		var ended interface{}
 		if err := rows.Scan(&l.ID, &l.ProfileID, &l.StartedAt, &ended,
-			&l.AssignedIP, &l.RxBytes, &l.TxBytes, &l.Status, &l.ErrorMsg); err != nil {
+			&l.AssignedIP, &l.AssignedIP6, &l.RxBytes, &l.TxBytes, &l.Status, &l.ErrorMsg); err != nil {
 			return nil, err
 		}
 		if t, ok := ended.(time.Time); ok {

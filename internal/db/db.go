@@ -45,7 +45,10 @@ func (s *Store) migrate() error {
 	if err != nil {
 		return err
 	}
-	return s.migrateV2()
+	if err := s.migrateV2(); err != nil {
+		return err
+	}
+	return s.migrateV3()
 }
 
 func (s *Store) migrateV2() error {
@@ -165,6 +168,41 @@ func nullStr(s sql.NullString) sql.NullString {
 	return s
 }
 
+// migrateV3 adds the assigned_ip6 column to connection_logs for IPv6
+// dual-stack support. Idempotent: skips if the column already exists.
+func (s *Store) migrateV3() error {
+	if columnExists(s.db, "connection_logs", "assigned_ip6") {
+		return nil
+	}
+	_, err := s.db.Exec(`ALTER TABLE connection_logs ADD COLUMN assigned_ip6 TEXT NOT NULL DEFAULT ''`)
+	if err != nil {
+		return fmt.Errorf("migrate v3 add assigned_ip6: %w", err)
+	}
+	return nil
+}
+
+// columnExists reports whether a column exists on a table.
+func columnExists(db *sql.DB, table, column string) bool {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false
+		}
+		if name == column {
+			return true
+		}
+	}
+	return false
+}
+
 const schemaV2 = `
 CREATE TABLE IF NOT EXISTS server_profiles (
 	id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -185,15 +223,16 @@ CREATE TABLE IF NOT EXISTS server_profiles (
 );
 
 CREATE TABLE IF NOT EXISTS connection_logs (
-	id          INTEGER PRIMARY KEY AUTOINCREMENT,
-	profile_id  INTEGER NOT NULL,
-	started_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	ended_at    DATETIME,
-	assigned_ip TEXT    NOT NULL DEFAULT '',
-	rx_bytes    INTEGER NOT NULL DEFAULT 0,
-	tx_bytes    INTEGER NOT NULL DEFAULT 0,
-	status      TEXT    NOT NULL DEFAULT 'connected',
-	error_msg   TEXT    NOT NULL DEFAULT '',
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	profile_id   INTEGER NOT NULL,
+	started_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	ended_at     DATETIME,
+	assigned_ip  TEXT    NOT NULL DEFAULT '',
+	assigned_ip6 TEXT    NOT NULL DEFAULT '',
+	rx_bytes     INTEGER NOT NULL DEFAULT 0,
+	tx_bytes     INTEGER NOT NULL DEFAULT 0,
+	status       TEXT    NOT NULL DEFAULT 'connected',
+	error_msg    TEXT    NOT NULL DEFAULT '',
 	FOREIGN KEY (profile_id) REFERENCES server_profiles(id) ON DELETE CASCADE
 );
 

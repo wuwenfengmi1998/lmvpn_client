@@ -294,7 +294,7 @@ sequenceDiagram
 
 ### 5.2 IP 分配规则
 
-服务端从 VPN 子网中分配客户端内网 IP（`internal/vpn/alloc.go:39-66`、`internal/vpn/service.go:47-57`）：
+服务端从 VPN 子网中分配客户端内网 IP（`internal/vpn/alloc.go:39-66`、`internal/vpn/service.go:47-58`）：
 
 | 地址 | 分配规则 | 说明 |
 |------|----------|------|
@@ -308,9 +308,19 @@ sequenceDiagram
 - 若该用户有预留 IP，优先使用预留；预留被占用时报错（`alloc.go:43-48`）
 - 地址耗尽时报错 "可用 IP 地址已耗尽"（`alloc.go:65`）
 
+#### IPv6 双栈
+
+当服务端配置了 IPv6 子网（`Subnet6`）时，客户端同时获得 IPv4 和 IPv6 地址：
+
+- IPv4 地址始终分配（`Subnet` 必填）
+- IPv6 地址仅当 `Subnet6` 非空时分配（可选）
+- IPv6 预留独立于 IPv4 预留，可单独配置
+- IPv6 子网前缀限制：`/64` ~ `/126`
+- 对于 `/64` 等大子网，`cidr.AddressCount` 会溢出，实际扫描上限为 65536 个地址
+
 ### 5.3 init 消息
 
-前置检查通过后，服务端发送 `init` 文本消息（`internal/vpn/tunnel.go:126-137`）：
+前置检查通过后，服务端发送 `init` 文本消息（`internal/vpn/tunnel.go:132-148`）：
 
 ```json
 {
@@ -318,17 +328,25 @@ sequenceDiagram
   "ip": "10.0.0.5",
   "prefix": 24,
   "mtu": 1420,
-  "server_ip": "10.0.0.1"
+  "server_ip": "10.0.0.1",
+  "ip6": "fd00:dead:beef::5",
+  "prefix6": 112,
+  "server_ip6": "fd00:dead:beef::1"
 }
 ```
 
-| 字段 | 类型 | 说明 | 源码 |
-|------|------|------|------|
-| `type` | string | 固定值 `"init"` | `internal/vpn/protocol.go:3-9` |
-| `ip` | string | 分配给客户端的内网 IP（点分十进制） | `tunnel.go:130` |
-| `prefix` | int | 子网前缀长度（如 `24`） | `tunnel.go:131` |
-| `mtu` | int | TUN 网卡 MTU | `tunnel.go:132` |
-| `server_ip` | string | 服务器内网 IP（对端地址） | `tunnel.go:133` |
+| 字段 | 类型 | 必填 | 说明 | 源码 |
+|------|------|------|------|------|
+| `type` | string | 是 | 固定值 `"init"` | `internal/vpn/protocol.go:3-10` |
+| `ip` | string | 是 | 分配给客户端的 IPv4 地址 | `tunnel.go:136` |
+| `prefix` | int | 是 | IPv4 子网前缀长度（如 `24`） | `tunnel.go:137` |
+| `mtu` | int | 是 | TUN 网卡 MTU | `tunnel.go:138` |
+| `server_ip` | string | 是 | 服务器 IPv4 地址 | `tunnel.go:139` |
+| `ip6` | string | 否 | 分配给客户端的 IPv6 地址（仅当服务端配置了 IPv6 子网时存在） | `tunnel.go:141-144` |
+| `prefix6` | int | 否 | IPv6 子网前缀长度 | `tunnel.go:142` |
+| `server_ip6` | string | 否 | 服务器 IPv6 地址 | `tunnel.go:143` |
+
+> ℹ️ `ip6`/`prefix6`/`server_ip6` 字段使用 `omitempty`，旧客户端可安全忽略。若服务端未配置 IPv6 子网，这三个字段不会出现。
 
 ### 5.4 ready 消息与超时
 
@@ -412,14 +430,14 @@ sequenceDiagram
 
 ### 6.4 反欺骗（Anti-Spoofing）
 
-服务端**强制校验**每个来自客户端的 IP 包的源地址（`internal/vpn/switch.go:113-116`）：
+服务端**强制校验**每个来自客户端的 IP 包的源地址（`internal/vpn/switch.go:113-126`）：
 
-```
-if 源IP != 该客户端被分配的IP:
-    丢弃该包（不转发，不写入TUN，不断开连接）
-```
+- **IPv4 包**：源地址必须等于客户端被分配的 IPv4 地址（`init.ip`）
+- **IPv6 包**：源地址必须等于客户端被分配的 IPv6 地址（`init.ip6`）
 
-> ⚠️ 客户端必须确保 TUN 网卡只发送源地址为 `init.ip` 的 IP 包。若客户端配置错误导致源 IP 不匹配，所有上行包将被静默丢弃。
+不匹配的包将被静默丢弃（不转发、不写入 TUN、不断开连接）。
+
+> ⚠️ 客户端必须确保 TUN 网卡只发送源地址与 `init.ip` / `init.ip6` 匹配的 IP 包。若客户端配置错误导致源 IP 不匹配，所有上行包将被静默丢弃。
 
 ### 6.5 非 IP 二进制帧
 
@@ -488,9 +506,11 @@ conn.WriteControl(websocket.PingMessage, nil, ...)
 
 | 约束 | 值 | 源码 |
 |------|----|----|
-| IP 版本 | 仅 IPv4 | `internal/handler/vpn.go:66-73` |
-| 前缀长度 | ≤ /30 | `internal/handler/vpn.go:74-78` |
+| IPv4 版本 | 仅 IPv4 | `internal/handler/vpn.go:66-73` |
+| IPv4 前缀长度 | ≤ /30 | `internal/handler/vpn.go:74-78` |
+| IPv6 前缀长度 | /64 ~ /126 | `internal/handler/vpn.go:81-92` |
 | 可用容量 | `AddressCount - 3` | `internal/vpn/alloc.go:106-112` |
+| IPv6 大子网容量 | ~65533（/64 等大子网 AddressCount 溢出时） | `internal/vpn/alloc.go:108-110` |
 
 ### 8.4 MTU 约束
 
@@ -516,15 +536,18 @@ type controlMessage struct {
 }
 ```
 
-`init` 消息结构较为特殊（`internal/vpn/protocol.go:3-9`）：
+`init` 消息结构较为特殊（`internal/vpn/protocol.go:3-10`）：
 
 ```go
 type initMessage struct {
-    Type     string `json:"type"`
-    IP       string `json:"ip"`
-    Prefix   int    `json:"prefix"`
-    MTU      int    `json:"mtu"`
-    ServerIP string `json:"server_ip"`
+    Type      string `json:"type"`
+    IP        string `json:"ip"`
+    Prefix    int    `json:"prefix"`
+    MTU       int    `json:"mtu"`
+    ServerIP  string `json:"server_ip"`
+    IP6       string `json:"ip6,omitempty"`
+    Prefix6   int    `json:"prefix6,omitempty"`
+    ServerIP6 string `json:"server_ip6,omitempty"`
 }
 ```
 
@@ -578,7 +601,7 @@ type initMessage struct {
 |------|----------------|------|------|------|
 | `auth_ok` | Text | 密码认证成功（仅方式 B） | JSON | `{"type":"auth_ok"}` |
 | `auth_err` | Text | 认证失败 | JSON | `{"type":"auth_err","message":"..."}` |
-| `init` | Text | 认证成功且前置检查通过 | JSON | `{"type":"init","ip":"...","prefix":24,"mtu":1420,"server_ip":"..."}` |
+| `init` | Text | 认证成功且前置检查通过 | JSON | `{"type":"init","ip":"...","prefix":24,"mtu":1420,"server_ip":"...","ip6":"...","prefix6":112,"server_ip6":"..."}` |
 | `error` | Text | 握手阶段失败 | JSON | `{"type":"error","message":"..."}` |
 | 数据帧 | Binary | `ready` 之后，下行 IP 包 | 原始 IP 包 | （二进制） |
 | Ping | WebSocket Ping | 每 30 秒 | 空 | （WebSocket 协议层） |
@@ -593,9 +616,11 @@ type initMessage struct {
 
 | 配置项 | 取值来源 | 说明 |
 |--------|----------|------|
-| TUN 网卡地址 | `init.ip` / `init.prefix` | 如 `10.0.0.5/24` |
+| TUN 网卡地址 (IPv4) | `init.ip` / `init.prefix` | 如 `10.0.0.5/24` |
+| TUN 网卡地址 (IPv6) | `init.ip6` / `init.prefix6` | 如 `fd00:dead:beef::5/112`（可选，仅当 init 含 ip6 时） |
 | MTU | `init.mtu` | 如 `1420` |
-| 对端地址 / 默认路由网关 | `init.server_ip` | 如 `10.0.0.1` |
+| 对端地址 / 默认路由网关 (IPv4) | `init.server_ip` | 如 `10.0.0.1` |
+| 对端地址 (IPv6) | `init.server_ip6` | 如 `fd00:dead:beef::1`（可选） |
 
 ### 11.2 Linux
 
@@ -608,10 +633,17 @@ ip addr add dev <tun> <ip>/<prefix> peer <server_ip>
 ip link set dev <tun> mtu <mtu>
 ```
 
+IPv6（仅当 init 含 `ip6` 时）：
+
+```
+ip addr add dev <tun> <ip6>/<prefix6>
+```
+
 路由：若需将所有流量经 VPN，添加默认路由：
 
 ```
 ip route add 0.0.0.0/0 dev <tun>
+ip route add ::/0 dev <tun>    # IPv6 默认路由（可选）
 ```
 
 ### 11.3 macOS
@@ -623,10 +655,17 @@ ifconfig <utun> inet <ip>/<prefix> <server_ip> up
 ifconfig <utun> mtu <mtu>
 ```
 
+IPv6（仅当 init 含 `ip6` 时）：
+
+```
+ifconfig <utun> inet6 <ip6>/<prefix6> up
+```
+
 路由：
 
 ```
 route add -inet -net 0.0.0.0/0 -interface <utun>
+route add -inet6 -net ::/0 -interface <utun>    # IPv6 默认路由（可选）
 ```
 
 > macOS 的 utun 接口由系统分配编号（如 `utun4`），客户端通常无法指定名称。
@@ -670,6 +709,12 @@ Linux 服务端须开启 IP 转发（`internal/vpn/diag_linux.go:53-60`）：
 sysctl -w net.ipv4.ip_forward=1
 ```
 
+IPv6 双栈场景还须开启 IPv6 转发（`internal/vpn/diag_linux.go:116-122`）：
+
+```
+sysctl -w net.ipv6.conf.all.forwarding=1
+```
+
 ### 12.2 NAT 伪装
 
 服务端须配置 NAT masquerade，将客户端源 IP 转换为服务器物理网卡 IP（`internal/vpn/diag_linux.go:80-113`）。
@@ -688,7 +733,19 @@ nft add rule ip nat postrouting oifname <物理网卡> masquerade
 iptables -t nat -A POSTROUTING -o <物理网卡> -j MASQUERADE
 ```
 
-> 服务端诊断接口 `GET /api/admin/vpn/diag`（`internal/handler/vpn.go:190-192`）会检测上述配置，客户端无法上网时可请管理员查看诊断结果。
+IPv6 NAT66（仅双栈场景需要）：
+
+**nft**：
+```
+nft add rule inet lmvpn_nat postrouting oifname <物理网卡> ip6 saddr <VPN_V6_SUBNET> masquerade
+```
+
+**ip6tables（回退）**：
+```
+ip6tables -t nat -A POSTROUTING -s <VPN_V6_SUBNET> -o <物理网卡> -j MASQUERADE
+```
+
+> 服务端诊断接口 `GET /api/admin/vpn/diag`（`internal/handler/vpn.go:190-192`）会检测上述配置（含 IPv6），客户端无法上网时可请管理员查看诊断结果。
 
 ### 12.3 子网与 MTU
 

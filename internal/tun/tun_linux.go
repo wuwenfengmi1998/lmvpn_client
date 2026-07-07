@@ -46,6 +46,14 @@ func (d *linuxDevice) Configure(localIP net.IP, prefix int, peerIP net.IP) error
 	return nil
 }
 
+func (d *linuxDevice) ConfigureIPv6(localIP6 net.IP, prefix6 int) error {
+	if localIP6 == nil {
+		return nil
+	}
+	localCidr := fmt.Sprintf("%s/%d", localIP6.String(), prefix6)
+	return execCmd("ip", "-6", "addr", "add", "dev", d.Name(), localCidr)
+}
+
 func (d *linuxDevice) SetMTU(mtu int) error {
 	return execCmd("ip", "link", "set", "dev", d.Name(), "mtu", fmt.Sprintf("%d", mtu))
 }

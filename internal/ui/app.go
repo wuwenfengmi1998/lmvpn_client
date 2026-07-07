@@ -31,6 +31,7 @@ type App struct {
 	profileSelect *widget.Select
 	stateLabel    *widget.Label
 	ipLabel       *widget.Label
+	ip6Label      *widget.Label
 	uptimeLabel   *widget.Label
 	rxLabel       *widget.Label
 	txLabel       *widget.Label
@@ -232,6 +233,7 @@ func (a *App) onResetDB() {
 			a.loadProfiles()
 			a.stateLabel.SetText(i18n.T("StateDisconnected"))
 			a.ipLabel.SetText(i18n.T("IpNone"))
+			a.ip6Label.SetText(i18n.T("Ip6None"))
 			a.uptimeLabel.SetText(i18n.T("UptimeNone"))
 			a.rxLabel.SetText(i18n.T("RxZero"))
 			a.txLabel.SetText(i18n.T("TxZero"))

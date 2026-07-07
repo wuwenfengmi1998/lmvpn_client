@@ -238,10 +238,11 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 	sm.conn = conn
 	sm.mu.Unlock()
 
-	sm.stats.SetConnected(conn.Init().IP)
+	sm.stats.SetConnected(conn.Init().IP, conn.Init().IP6)
 	sm.setState(stats.StateConnected)
 	log.L().Info("VPN connected",
 		"ip", conn.Init().IP, "server_ip", conn.Init().ServerIP,
+		"ip6", conn.Init().IP6, "server_ip6", conn.Init().ServerIP6,
 		"mtu", conn.Init().MTU)
 
 	// Start stats reporter.
@@ -280,6 +281,20 @@ func (sm *SessionManager) setupTUN(init protocol.InitMessage, cfg SessionConfig)
 		return fmt.Errorf("configure tun: %w", err)
 	}
 
+	// Configure IPv6 address when the server assigned one (dual-stack).
+	hasV6 := init.IP6 != ""
+	if hasV6 {
+		ip6 := net.ParseIP(init.IP6)
+		if ip6 == nil {
+			dev.Close()
+			return fmt.Errorf("invalid init IPv6: %s", init.IP6)
+		}
+		if err := dev.ConfigureIPv6(ip6, init.Prefix6); err != nil {
+			dev.Close()
+			return fmt.Errorf("configure tun ipv6: %w", err)
+		}
+	}
+
 	mtu := init.MTU
 	if cfg.MTUOverride > 0 {
 		mtu = cfg.MTUOverride
@@ -295,6 +310,8 @@ func (sm *SessionManager) setupTUN(init protocol.InitMessage, cfg SessionConfig)
 		InterfaceName: dev.Name(),
 		VPNIP:         init.IP,
 		VPNPrefix:     init.Prefix,
+		VPNIP6:        init.IP6,
+		VPNPrefix6:    init.Prefix6,
 		ServerHost:    serverHostFromURL(cfg.ServerURL),
 		CustomCIDRs:   cfg.CustomCIDRs,
 	}
@@ -304,7 +321,8 @@ func (sm *SessionManager) setupTUN(init protocol.InitMessage, cfg SessionConfig)
 	}
 
 	log.L().Info("TUN configured",
-		"dev", dev.Name(), "ip", init.IP, "prefix", init.Prefix, "mtu", mtu)
+		"dev", dev.Name(), "ip", init.IP, "prefix", init.Prefix,
+		"ip6", init.IP6, "prefix6", init.Prefix6, "mtu", mtu)
 	return nil
 }
 
