@@ -9,8 +9,9 @@ APP_BUNDLE  = $(APP_NAME).app
 
 GO          = go
 CGO_ENABLED = 1
+SEMVER      = 0.3.7
 GIT_HASH    = $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
-VERSION     = 0.3.7-$(GIT_HASH)
+VERSION     = $(SEMVER)-$(GIT_HASH)
 LDFLAGS     = -s -w -X lmvpn/internal/version.Version=$(VERSION)
 
 .PHONY: all build app run daemon clean vet tidy fmt icon icon-windows build-windows installer-windows
@@ -32,6 +33,9 @@ app: build
 	cp $(BUILD_DIR)/$(GUI_BIN) $(APP_BUNDLE)/Contents/MacOS/$(GUI_BIN)
 	cp $(BUILD_DIR)/$(DAEMON_BIN) $(APP_BUNDLE)/Contents/MacOS/$(DAEMON_BIN)
 	cp resources/Info.plist $(APP_BUNDLE)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(SEMVER)" \
+		-c "Set :CFBundleVersion $(GIT_HASH)" \
+		$(APP_BUNDLE)/Contents/Info.plist
 	@if [ -f resources/icon.icns ]; then \
 		cp resources/icon.icns $(APP_BUNDLE)/Contents/Resources/icon.icns; \
 	else echo "  (no icon.icns found, skipping icon)"; fi
