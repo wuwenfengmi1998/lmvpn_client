@@ -9,7 +9,7 @@ APP_BUNDLE  = $(APP_NAME).app
 
 GO          = go
 CGO_ENABLED = 1
-SEMVER      = 0.3.7
+SEMVER      = 0.3.9
 GIT_HASH    = $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 VERSION     = $(SEMVER)-$(GIT_HASH)
 LDFLAGS     = -s -w -X lmvpn/internal/version.Version=$(VERSION)
