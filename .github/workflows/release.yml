@@ -86,6 +86,8 @@ jobs:
 
       - name: Build installer
         shell: bash
+        env:
+          MSYS_NO_PATHCONV: '1'
         run: make installer-windows SEMVER=${{ steps.ver.outputs.version }} MINGW_CC=gcc SHELL=bash
 
       - name: Upload artifact
