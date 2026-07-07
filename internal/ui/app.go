@@ -112,11 +112,24 @@ func Run() {
 			hideDockIcon()
 			a.window.Hide()
 		} else {
-			a.fyneApp.Quit()
+			a.quit()
 		}
 	})
 
 	a.window.ShowAndRun()
+}
+
+// quit disconnects any active VPN session (via the daemon) and then
+// quits the application. The daemon process itself remains running.
+func (a *App) quit() {
+	a.mu.Lock()
+	client := a.ipcClient
+	a.ipcClient = nil
+	a.mu.Unlock()
+	if client != nil {
+		_ = ipc.SendStop(client)
+	}
+	a.fyneApp.Quit()
 }
 
 // loadProfiles loads all profiles from the database and populates the
@@ -218,18 +231,17 @@ func (a *App) onResetDB() {
 			// Reset UI state.
 			a.currentProfile = nil
 			a.loadProfiles()
-			a.stateLabel.SetText(i18n.T("StateDisconnected"))
-			a.ipLabel.SetText(i18n.T("IpNone"))
-			a.ip6Label.SetText(i18n.T("Ip6None"))
-			a.uptimeLabel.SetText(i18n.T("UptimeNone"))
-			a.rxV4Label.SetText(i18n.T("RxV4Zero"))
-			a.txV4Label.SetText(i18n.T("TxV4Zero"))
-			a.rxV6Label.SetText(i18n.T("RxV6Zero"))
-			a.txV6Label.SetText(i18n.T("TxV6Zero"))
-			a.rxTotalLabel.SetText(i18n.T("RxTotalZero"))
-			a.txTotalLabel.SetText(i18n.T("TxTotalZero"))
-			a.connectBtn.Enable()
-			a.disconnectBtn.Disable()
+		a.stateLabel.SetText(i18n.T("StateDisconnected"))
+		a.ipLabel.SetText(i18n.T("IpNone"))
+		a.ip6Label.SetText(i18n.T("Ip6None"))
+		a.uptimeLabel.SetText(i18n.T("UptimeNone"))
+		a.rxV4Label.SetText(i18n.T("RxV4Zero"))
+		a.txV4Label.SetText(i18n.T("TxV4Zero"))
+		a.rxV6Label.SetText(i18n.T("RxV6Zero"))
+		a.txV6Label.SetText(i18n.T("TxV6Zero"))
+		a.rxTotalLabel.SetText(i18n.T("RxTotalZero"))
+		a.txTotalLabel.SetText(i18n.T("TxTotalZero"))
+		a.setConnButtons(true, false)
 		}, a.window).Show()
 }
 
@@ -296,12 +308,10 @@ func (a *App) rebuildUI() {
 
 	// Restore connection state.
 	if wasConnected {
-		a.connectBtn.Disable()
-		a.disconnectBtn.Enable()
+		a.setConnButtons(false, true)
 		a.stateLabel.SetText(i18n.T("StateConnected"))
 	} else {
-		a.connectBtn.Enable()
-		a.disconnectBtn.Disable()
+		a.setConnButtons(true, false)
 		a.stateLabel.SetText(i18n.T("StateDisconnected"))
 	}
 

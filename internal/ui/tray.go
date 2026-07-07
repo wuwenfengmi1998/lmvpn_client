@@ -46,24 +46,33 @@ func (a *App) setupTray() {
 		autoItem, enItem, zhItem,
 	)
 
-	menu := fyne.NewMenu(i18n.T("WindowTitle"),
-		fyne.NewMenuItem(i18n.T("TrayShowWindow"), func() {
-			showDockIcon()
-			a.window.Show()
-			a.window.RequestFocus()
-		}),
-		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem(i18n.T("TrayConnect"), func() {
+		connectItem := fyne.NewMenuItem(i18n.T("TrayConnect"), func() {
 			a.onConnect()
-		}),
-		fyne.NewMenuItem(i18n.T("TrayDisconnect"), func() {
+		})
+		disconnectItem := fyne.NewMenuItem(i18n.T("TrayDisconnect"), func() {
 			a.onDisconnect()
-		}),
+		})
+		if a.connectBtn != nil {
+			connectItem.Disabled = a.connectBtn.Disabled()
+		}
+		if a.disconnectBtn != nil {
+			disconnectItem.Disabled = a.disconnectBtn.Disabled()
+		}
+
+		menu := fyne.NewMenu(i18n.T("WindowTitle"),
+			fyne.NewMenuItem(i18n.T("TrayShowWindow"), func() {
+				showDockIcon()
+				a.window.Show()
+				a.window.RequestFocus()
+			}),
+			fyne.NewMenuItemSeparator(),
+			connectItem,
+			disconnectItem,
 		fyne.NewMenuItemSeparator(),
 		langItem,
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem(i18n.T("TrayQuit"), func() {
-			a.fyneApp.Quit()
+			a.quit()
 		}),
 	)
 	deskApp.SetSystemTrayMenu(menu)

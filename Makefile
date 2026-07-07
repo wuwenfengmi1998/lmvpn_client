@@ -10,7 +10,7 @@ APP_BUNDLE  = $(APP_NAME).app
 GO          = go
 CGO_ENABLED = 1
 GIT_HASH    = $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
-VERSION     = 0.2.6-$(GIT_HASH)
+VERSION     = 0.3.2-$(GIT_HASH)
 LDFLAGS     = -s -w -X lmvpn/internal/version.Version=$(VERSION)
 
 .PHONY: all build app run daemon clean vet tidy fmt icon

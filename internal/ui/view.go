@@ -19,6 +19,22 @@ func showError(title, message string, parent fyne.Window) {
 	dialog.NewCustom(title, i18n.T("BtnOK"), widget.NewLabel(message), parent).Show()
 }
 
+// setConnButtons enables/disables the connect and disconnect buttons
+// and refreshes the tray menu to match.
+func (a *App) setConnButtons(connectEnabled, disconnectEnabled bool) {
+	if connectEnabled {
+		a.connectBtn.Enable()
+	} else {
+		a.connectBtn.Disable()
+	}
+	if disconnectEnabled {
+		a.disconnectBtn.Enable()
+	} else {
+		a.disconnectBtn.Disable()
+	}
+	a.setupTray()
+}
+
 // buildMainWindow creates the main application window layout.
 func (a *App) buildMainWindow() fyne.CanvasObject {
 	// Profile selector.
@@ -78,8 +94,7 @@ func (a *App) onConnect() {
 		return
 	}
 
-	a.connectBtn.Disable()
-	a.disconnectBtn.Enable()
+	a.setConnButtons(false, true)
 	a.stateLabel.SetText(i18n.T("StateConnecting"))
 
 	go func() {
@@ -89,8 +104,7 @@ func (a *App) onConnect() {
 			fyne.Do(func() {
 				showError(i18n.T("DlgDaemonError"), err.Error(), a.window)
 				a.stateLabel.SetText(i18n.T("StateDisconnected"))
-				a.connectBtn.Enable()
-				a.disconnectBtn.Disable()
+				a.setConnButtons(true, false)
 			})
 			return
 		}
@@ -107,8 +121,7 @@ func (a *App) onConnect() {
 					i18n.T("DlgCredentialErrorMsg"),
 					a.window)
 				a.stateLabel.SetText(i18n.T("StateDisconnected"))
-				a.connectBtn.Enable()
-				a.disconnectBtn.Disable()
+				a.setConnButtons(true, false)
 			})
 			return
 		}
@@ -137,8 +150,7 @@ func (a *App) onConnect() {
 			fyne.Do(func() {
 				showError(i18n.T("DlgIPCError"), err.Error(), a.window)
 				a.stateLabel.SetText(i18n.T("StateDisconnected"))
-				a.connectBtn.Enable()
-				a.disconnectBtn.Disable()
+				a.setConnButtons(true, false)
 			})
 			return
 		}
@@ -157,8 +169,7 @@ func (a *App) onDisconnect() {
 		return
 	}
 	_ = ipc.SendStop(client)
-	a.disconnectBtn.Disable()
-	a.connectBtn.Enable()
+	a.setConnButtons(true, false)
 	a.stateLabel.SetText(i18n.T("StateDisconnected"))
 }
 
@@ -189,8 +200,7 @@ func (a *App) eventLoop() {
 					a.txV6Label.SetText(i18n.T("TxV6Zero"))
 					a.rxTotalLabel.SetText(i18n.T("RxTotalZero"))
 					a.txTotalLabel.SetText(i18n.T("TxTotalZero"))
-					a.connectBtn.Enable()
-					a.disconnectBtn.Disable()
+					a.setConnButtons(true, false)
 				}
 			})
 			return
@@ -222,26 +232,21 @@ func (a *App) applyState(state string) {
 	switch stats.State(state) {
 	case stats.StateConnected:
 		a.stateLabel.SetText(i18n.T("StateConnected"))
-		a.connectBtn.Disable()
-		a.disconnectBtn.Enable()
+		a.setConnButtons(false, true)
 	case stats.StateConnecting:
 		a.stateLabel.SetText(i18n.T("StateConnecting"))
-		a.connectBtn.Disable()
-		a.disconnectBtn.Enable()
+		a.setConnButtons(false, true)
 	case stats.StateReconnecting:
 		a.stateLabel.SetText(i18n.T("StateReconnecting"))
-		a.connectBtn.Disable()
-		a.disconnectBtn.Enable()
+		a.setConnButtons(false, true)
 	case stats.StateDisconnected:
 		a.stateLabel.SetText(i18n.T("StateDisconnected"))
 		a.ipLabel.SetText(i18n.T("IpNone"))
 		a.ip6Label.SetText(i18n.T("Ip6None"))
-		a.connectBtn.Enable()
-		a.disconnectBtn.Disable()
+		a.setConnButtons(true, false)
 	case stats.StateError:
 		a.stateLabel.SetText(i18n.T("StateError"))
-		a.connectBtn.Enable()
-		a.disconnectBtn.Disable()
+		a.setConnButtons(true, false)
 	}
 }
 
