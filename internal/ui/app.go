@@ -27,14 +27,23 @@ type App struct {
 	window        fyne.Window
 	profileWindow fyne.Window
 
+	// Profile list window.
+	profileListWindow fyne.Window
+	profileList       *widget.List
+	listSelectedIndex int
+
 	// UI widgets
 	profileSelect *widget.Select
 	stateLabel    *widget.Label
 	ipLabel       *widget.Label
 	ip6Label      *widget.Label
 	uptimeLabel   *widget.Label
-	rxLabel       *widget.Label
-	txLabel       *widget.Label
+	rxV4Label     *widget.Label
+	txV4Label     *widget.Label
+	rxV6Label     *widget.Label
+	txV6Label     *widget.Label
+	rxTotalLabel  *widget.Label
+	txTotalLabel  *widget.Label
 	connectBtn    *widget.Button
 	disconnectBtn *widget.Button
 
@@ -71,10 +80,11 @@ func Run() {
 	}
 
 	a := &App{
-		fyneApp:     app.NewWithID(paths.BundleID),
-		db:          store,
-		kc:          keychain.New(),
-		langSetting: cfg.Language,
+		fyneApp:           app.NewWithID(paths.BundleID),
+		db:                store,
+		kc:                keychain.New(),
+		langSetting:       cfg.Language,
+		listSelectedIndex: -1,
 	}
 
 	a.window = a.fyneApp.NewWindow(i18n.T("WindowTitle"))
@@ -128,6 +138,16 @@ func (a *App) loadProfiles() {
 		a.profileSelect.SetSelected("")
 		a.profileSelect.Refresh()
 	}
+	a.listSelectedIndex = -1
+	a.refreshProfileList()
+}
+
+// refreshProfileList refreshes the profile list widget if the profile
+// list window is currently open.
+func (a *App) refreshProfileList() {
+	if a.profileList != nil {
+		a.profileList.Refresh()
+	}
 }
 
 // profileNames returns the names of all loaded profiles.
@@ -152,39 +172,6 @@ func (a *App) selectProfileByName(name string) {
 // onAddProfile shows a dialog to create a new profile.
 func (a *App) onAddProfile() {
 	a.showProfileDialog(nil)
-}
-
-// onEditProfile shows a dialog to edit the current profile.
-func (a *App) onEditProfile() {
-	if a.currentProfile == nil {
-		dialog.NewCustom(i18n.T("DlgNoProfileTitle"), i18n.T("BtnOK"),
-			widget.NewLabel(i18n.T("DlgNoProfileEditMsg")), a.window).Show()
-		return
-	}
-	p := *a.currentProfile
-	a.showProfileDialog(&p)
-}
-
-// onDeleteProfile deletes the current profile after confirmation.
-func (a *App) onDeleteProfile() {
-	if a.currentProfile == nil {
-		return
-	}
-	name := a.currentProfile.Name
-	dialog.NewCustomConfirm(i18n.T("DlgDeleteProfileTitle"),
-		i18n.T("BtnDelete"), i18n.T("BtnCancel"),
-		widget.NewLabel(i18n.T("DlgDeleteProfileMsg", map[string]interface{}{"name": name})),
-		func(ok bool) {
-			if !ok {
-				return
-			}
-			if err := a.db.DeleteProfile(a.currentProfile.ID); err != nil {
-				showError(i18n.T("DlgError"), err.Error(), a.window)
-				return
-			}
-			_ = a.kc.DeleteAll(name)
-			a.loadProfiles()
-		}, a.window).Show()
 }
 
 // onResetDB deletes the SQLite database file after confirmation,
@@ -235,8 +222,12 @@ func (a *App) onResetDB() {
 			a.ipLabel.SetText(i18n.T("IpNone"))
 			a.ip6Label.SetText(i18n.T("Ip6None"))
 			a.uptimeLabel.SetText(i18n.T("UptimeNone"))
-			a.rxLabel.SetText(i18n.T("RxZero"))
-			a.txLabel.SetText(i18n.T("TxZero"))
+			a.rxV4Label.SetText(i18n.T("RxV4Zero"))
+			a.txV4Label.SetText(i18n.T("TxV4Zero"))
+			a.rxV6Label.SetText(i18n.T("RxV6Zero"))
+			a.txV6Label.SetText(i18n.T("TxV6Zero"))
+			a.rxTotalLabel.SetText(i18n.T("RxTotalZero"))
+			a.txTotalLabel.SetText(i18n.T("TxTotalZero"))
 			a.connectBtn.Enable()
 			a.disconnectBtn.Disable()
 		}, a.window).Show()
@@ -277,6 +268,12 @@ func (a *App) rebuildUI() {
 	selectedName := ""
 	if a.currentProfile != nil {
 		selectedName = a.currentProfile.Name
+	}
+
+	// Close the profile list window if open; it holds cached strings
+	// and will be recreated with the new language on next open.
+	if a.profileListWindow != nil {
+		a.profileListWindow.Close()
 	}
 
 	// Rebuild window content (creates fresh widgets with new strings).

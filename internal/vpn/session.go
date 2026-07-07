@@ -51,6 +51,18 @@ type SessionManager struct {
 	dev      tun.Device
 	routeMgr *route.Manager
 	conn     *transport.Conn
+
+	// EWMA speed smoothing state. Only touched by reportStats (single
+	// goroutine), so no lock needed. ewma* fields hold the smoothed
+	// bytes/sec; prev* hold the last snapshot's cumulative counters and
+	// tick time for delta computation.
+	ewmaRxV4   float64
+	ewmaTxV4   float64
+	ewmaRxV6   float64
+	ewmaTxV6   float64
+	prevSnap   stats.Snapshot
+	prevTick   time.Time
+	speedReady bool
 }
 
 // New creates a SessionManager. The onState callback (if non-nil) is
@@ -359,7 +371,7 @@ func (sm *SessionManager) pumpPackets(ctx context.Context, conn *transport.Conn)
 				}
 				return
 			}
-			sm.stats.TxBytes.Add(int64(n))
+			sm.stats.AddTx(buf[:n])
 		}
 	}()
 
@@ -386,7 +398,7 @@ func (sm *SessionManager) pumpPackets(ctx context.Context, conn *transport.Conn)
 				conn.Close()
 				return
 			}
-			sm.stats.RxBytes.Add(int64(len(data)))
+			sm.stats.AddRx(data)
 		}
 	}()
 
@@ -446,9 +458,15 @@ func (sm *SessionManager) setState(s stats.State) {
 }
 
 // reportStats periodically calls the onStats callback while connected.
+// On each tick it derives per-family speeds (bytes/sec) from the
+// delta between the current and previous cumulative counters, then
+// applies EWMA smoothing (0.7 old + 0.3 new) so the displayed rates
+// don't jitter. The combined speeds are the sum of the per-family
+// smoothed values.
 func (sm *SessionManager) reportStats(done <-chan struct{}, ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	const ewmaAlpha = 0.3
 	for {
 		select {
 		case <-done:
@@ -456,9 +474,49 @@ func (sm *SessionManager) reportStats(done <-chan struct{}, ctx context.Context)
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if sm.onStats != nil {
-				sm.onStats(sm.stats.Snapshot())
+			if sm.onStats == nil {
+				continue
 			}
+			snap := sm.stats.Snapshot()
+			now := time.Now()
+			if sm.speedReady {
+				elapsed := now.Sub(sm.prevTick).Seconds()
+				if elapsed <= 0 {
+					elapsed = 1
+				}
+				// Per-second deltas (bytes/sec), clamped to >= 0 in case
+				// of counter resets between reconnects within the same
+				// SessionManager lifetime.
+				rxV4 := max(0.0, float64(snap.RxBytesV4-sm.prevSnap.RxBytesV4)/elapsed)
+				txV4 := max(0.0, float64(snap.TxBytesV4-sm.prevSnap.TxBytesV4)/elapsed)
+				rxV6 := max(0.0, float64(snap.RxBytesV6-sm.prevSnap.RxBytesV6)/elapsed)
+				txV6 := max(0.0, float64(snap.TxBytesV6-sm.prevSnap.TxBytesV6)/elapsed)
+				if sm.ewmaRxV4 == 0 && sm.ewmaTxV4 == 0 && sm.ewmaRxV6 == 0 && sm.ewmaTxV6 == 0 {
+					// First real sample: seed instead of ramping from 0.
+					sm.ewmaRxV4, sm.ewmaTxV4, sm.ewmaRxV6, sm.ewmaTxV6 = rxV4, txV4, rxV6, txV6
+				} else {
+					sm.ewmaRxV4 = sm.ewmaRxV4*(1-ewmaAlpha) + rxV4*ewmaAlpha
+					sm.ewmaTxV4 = sm.ewmaTxV4*(1-ewmaAlpha) + txV4*ewmaAlpha
+					sm.ewmaRxV6 = sm.ewmaRxV6*(1-ewmaAlpha) + rxV6*ewmaAlpha
+					sm.ewmaTxV6 = sm.ewmaTxV6*(1-ewmaAlpha) + txV6*ewmaAlpha
+				}
+				snap.RxSpeedV4 = int64(sm.ewmaRxV4)
+				snap.TxSpeedV4 = int64(sm.ewmaTxV4)
+				snap.RxSpeedV6 = int64(sm.ewmaRxV6)
+				snap.TxSpeedV6 = int64(sm.ewmaTxV6)
+				snap.RxSpeed = snap.RxSpeedV4 + snap.RxSpeedV6
+				snap.TxSpeed = snap.TxSpeedV4 + snap.TxSpeedV6
+			}
+			sm.prevSnap = snap
+			// Clear speed fields on the stored prev copy so we don't
+			// accidentally carry stale speed into the next delta base
+			// (only cumulative bytes matter for deltas).
+			sm.prevSnap.RxSpeedV4, sm.prevSnap.TxSpeedV4 = 0, 0
+			sm.prevSnap.RxSpeedV6, sm.prevSnap.TxSpeedV6 = 0, 0
+			sm.prevSnap.RxSpeed, sm.prevSnap.TxSpeed = 0, 0
+			sm.prevTick = now
+			sm.speedReady = true
+			sm.onStats(snap)
 		}
 	}
 }

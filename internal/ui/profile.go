@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
 
 	"lmvpn/internal/i18n"
@@ -8,6 +9,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -18,7 +20,7 @@ var (
 	authCodes  = []string{string(model.AuthModeBoth), string(model.AuthModeJWT), string(model.AuthModePassword)}
 	routeCodes = []string{string(model.RoutingFull), string(model.RoutingSplit), string(model.RoutingCustom)}
 
-	protoCodes  = []string{"wss", "ws"}
+	protoCodes = []string{"wss", "ws"}
 )
 
 func authModeLabels() []string {
@@ -266,4 +268,98 @@ func parseIntDefault(s string, def int) int {
 		return def
 	}
 	return n
+}
+
+// showProfileListWindow opens a window listing all saved profiles with
+// buttons to add, edit, delete, and reset the database. Only one
+// instance is allowed; if already open it is brought to the front.
+func (a *App) showProfileListWindow() {
+	if a.profileListWindow != nil {
+		a.profileListWindow.RequestFocus()
+		return
+	}
+
+	a.profileList = widget.NewList(
+		func() int { return len(a.profiles) },
+		func() fyne.CanvasObject {
+			name := widget.NewLabel("")
+			name.TextStyle = fyne.TextStyle{Bold: true}
+			host := widget.NewLabel("")
+			return container.NewVBox(name, host)
+		},
+		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			box := obj.(*fyne.Container)
+			nameLbl := box.Objects[0].(*widget.Label)
+			hostLbl := box.Objects[1].(*widget.Label)
+			if id >= 0 && id < len(a.profiles) {
+				p := a.profiles[id]
+				nameLbl.SetText(p.Name)
+				hostLbl.SetText(fmt.Sprintf("%s:%d", p.Host, p.Port))
+			}
+		},
+	)
+	a.profileList.OnSelected = func(id widget.ListItemID) {
+		a.listSelectedIndex = id
+	}
+	a.profileList.OnUnselected = func(_ widget.ListItemID) {
+		a.listSelectedIndex = -1
+	}
+
+	addBtn := widget.NewButton(i18n.T("BtnAddProfile"), a.onAddProfile)
+	editBtn := widget.NewButton(i18n.T("BtnEdit"), a.onEditProfileFromList)
+	deleteBtn := widget.NewButton(i18n.T("BtnDelete"), a.onDeleteProfileFromList)
+	resetDBBtn := widget.NewButton(i18n.T("BtnResetDB"), a.onResetDB)
+
+	buttons := container.NewGridWithColumns(4, addBtn, editBtn, deleteBtn, resetDBBtn)
+
+	win := a.fyneApp.NewWindow(i18n.T("ProfileListTitle"))
+	a.profileListWindow = win
+	win.SetOnClosed(func() {
+		a.profileListWindow = nil
+		a.profileList = nil
+		a.listSelectedIndex = -1
+	})
+
+	win.SetContent(container.NewBorder(nil, buttons, nil, nil, a.profileList))
+	win.Resize(fyne.NewSize(460, 400))
+	win.Show()
+}
+
+// onEditProfileFromList opens the profile editor for the profile
+// selected in the list window.
+func (a *App) onEditProfileFromList() {
+	idx := a.listSelectedIndex
+	if idx < 0 || idx >= len(a.profiles) {
+		dialog.NewCustom(i18n.T("DlgNoListSelectTitle"), i18n.T("BtnOK"),
+			widget.NewLabel(i18n.T("DlgNoListSelectEditMsg")), a.profileListWindow).Show()
+		return
+	}
+	p := a.profiles[idx]
+	a.showProfileDialog(&p)
+}
+
+// onDeleteProfileFromList deletes the profile selected in the list
+// window after confirmation.
+func (a *App) onDeleteProfileFromList() {
+	idx := a.listSelectedIndex
+	if idx < 0 || idx >= len(a.profiles) {
+		dialog.NewCustom(i18n.T("DlgNoListSelectTitle"), i18n.T("BtnOK"),
+			widget.NewLabel(i18n.T("DlgNoListSelectDeleteMsg")), a.profileListWindow).Show()
+		return
+	}
+	p := a.profiles[idx]
+	dialog.NewCustomConfirm(i18n.T("DlgDeleteProfileTitle"),
+		i18n.T("BtnDelete"), i18n.T("BtnCancel"),
+		widget.NewLabel(i18n.T("DlgDeleteProfileMsg", map[string]interface{}{"name": p.Name})),
+		func(ok bool) {
+			if !ok {
+				return
+			}
+			if err := a.db.DeleteProfile(p.ID); err != nil {
+				showError(i18n.T("DlgError"), err.Error(), a.profileListWindow)
+				return
+			}
+			_ = a.kc.DeleteAll(p.Name)
+			a.loadProfiles()
+		}, a.profileListWindow).Show()
 }

@@ -32,15 +32,21 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 	a.ipLabel = widget.NewLabel(i18n.T("IpNone"))
 	a.ip6Label = widget.NewLabel(i18n.T("Ip6None"))
 	a.uptimeLabel = widget.NewLabel(i18n.T("UptimeNone"))
-	a.rxLabel = widget.NewLabel(i18n.T("RxZero"))
-	a.txLabel = widget.NewLabel(i18n.T("TxZero"))
+	a.rxV4Label = widget.NewLabel(i18n.T("RxV4Zero"))
+	a.txV4Label = widget.NewLabel(i18n.T("TxV4Zero"))
+	a.rxV6Label = widget.NewLabel(i18n.T("RxV6Zero"))
+	a.txV6Label = widget.NewLabel(i18n.T("TxV6Zero"))
+	a.rxTotalLabel = widget.NewLabel(i18n.T("RxTotalZero"))
+	a.txTotalLabel = widget.NewLabel(i18n.T("TxTotalZero"))
 
 	statusCard := widget.NewCard(i18n.T("StatusLabel"), "", container.NewVBox(
 		a.stateLabel,
 		a.ipLabel,
 		a.ip6Label,
 		a.uptimeLabel,
-		container.NewHBox(a.rxLabel, a.txLabel),
+		container.NewHBox(a.rxV4Label, a.txV4Label),
+		container.NewHBox(a.rxV6Label, a.txV6Label),
+		container.NewHBox(a.rxTotalLabel, a.txTotalLabel),
 	))
 
 	// Buttons.
@@ -49,25 +55,17 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 	a.disconnectBtn = widget.NewButton(i18n.T("BtnDisconnect"), a.onDisconnect)
 	a.disconnectBtn.Disable()
 
-	addBtn := widget.NewButton(i18n.T("BtnAddProfile"), a.onAddProfile)
-	editBtn := widget.NewButton(i18n.T("BtnEdit"), a.onEditProfile)
-	deleteBtn := widget.NewButton(i18n.T("BtnDelete"), a.onDeleteProfile)
-
-	resetDBBtn := widget.NewButton(i18n.T("BtnResetDB"), a.onResetDB)
+	profileListBtn := widget.NewButton(i18n.T("BtnProfileList"), a.showProfileListWindow)
 
 	buttons := container.NewGridWithColumns(2,
 		a.connectBtn, a.disconnectBtn,
-	)
-	profileButtons := container.NewGridWithColumns(3,
-		addBtn, editBtn, deleteBtn,
 	)
 
 	return container.NewVBox(
 		widget.NewLabel(i18n.T("ProfileLabel")),
 		a.profileSelect,
 		buttons,
-		profileButtons,
-		resetDBBtn,
+		profileListBtn,
 		statusCard,
 		widget.NewLabel(fmt.Sprintf("v%s", Version)),
 	)
@@ -185,8 +183,12 @@ func (a *App) eventLoop() {
 					a.ipLabel.SetText(i18n.T("IpNone"))
 					a.ip6Label.SetText(i18n.T("Ip6None"))
 					a.uptimeLabel.SetText(i18n.T("UptimeNone"))
-					a.rxLabel.SetText(i18n.T("RxZero"))
-					a.txLabel.SetText(i18n.T("TxZero"))
+					a.rxV4Label.SetText(i18n.T("RxV4Zero"))
+					a.txV4Label.SetText(i18n.T("TxV4Zero"))
+					a.rxV6Label.SetText(i18n.T("RxV6Zero"))
+					a.txV6Label.SetText(i18n.T("TxV6Zero"))
+					a.rxTotalLabel.SetText(i18n.T("RxTotalZero"))
+					a.txTotalLabel.SetText(i18n.T("TxTotalZero"))
 					a.connectBtn.Enable()
 					a.disconnectBtn.Disable()
 				}
@@ -256,8 +258,24 @@ func (a *App) applyStats(s stats.Snapshot) {
 	if s.State == stats.StateConnected {
 		a.stateLabel.SetText(i18n.T("StateConnected"))
 	}
-	a.rxLabel.SetText(i18n.T("RxLabel", map[string]interface{}{"bytes": formatBytes(s.RxBytes)}))
-	a.txLabel.SetText(i18n.T("TxLabel", map[string]interface{}{"bytes": formatBytes(s.TxBytes)}))
+	a.rxV4Label.SetText(i18n.T("RxV4Label", map[string]interface{}{
+		"bytes": formatBytes(s.RxBytesV4), "speed": formatSpeed(s.RxSpeedV4),
+	}))
+	a.txV4Label.SetText(i18n.T("TxV4Label", map[string]interface{}{
+		"bytes": formatBytes(s.TxBytesV4), "speed": formatSpeed(s.TxSpeedV4),
+	}))
+	a.rxV6Label.SetText(i18n.T("RxV6Label", map[string]interface{}{
+		"bytes": formatBytes(s.RxBytesV6), "speed": formatSpeed(s.RxSpeedV6),
+	}))
+	a.txV6Label.SetText(i18n.T("TxV6Label", map[string]interface{}{
+		"bytes": formatBytes(s.TxBytesV6), "speed": formatSpeed(s.TxSpeedV6),
+	}))
+	a.rxTotalLabel.SetText(i18n.T("RxTotalLabel", map[string]interface{}{
+		"bytes": formatBytes(s.RxBytes), "speed": formatSpeed(s.RxSpeed),
+	}))
+	a.txTotalLabel.SetText(i18n.T("TxTotalLabel", map[string]interface{}{
+		"bytes": formatBytes(s.TxBytes), "speed": formatSpeed(s.TxSpeed),
+	}))
 	if s.Uptime > 0 {
 		a.uptimeLabel.SetText(i18n.T("UptimeLabel", map[string]interface{}{"uptime": formatDuration(s.Uptime)}))
 	}
@@ -275,6 +293,23 @@ func formatBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// formatSpeed formats a bytes/sec rate as a decimal bits/sec rate
+// (kbps / Mbps / Gbps). bps is the byte rate; it is converted to bits
+// by multiplying by 8 and scaled by 1000 (decimal, network convention).
+func formatSpeed(bps int64) string {
+	const unit = 1000
+	bits := bps * 8
+	if bits < unit {
+		return fmt.Sprintf("%d bps", bits)
+	}
+	div, exp := int64(unit), 0
+	for n := bits / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cbps", float64(bits)/float64(div), "kMGTPE"[exp])
 }
 
 // formatDuration formats an uptime duration.
