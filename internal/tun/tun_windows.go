@@ -116,12 +116,16 @@ func (d *wintunDevice) ConfigureIPv6(localIP6 net.IP, prefix6 int) error {
 func (d *wintunDevice) configureIPv6Addr(ip net.IP, prefix int) error {
 	addr := fmt.Sprintf("%s/%d", ip.String(), prefix)
 	return execCmd("netsh", "interface", "ipv6", "add", "address",
-		"name="+d.name, "address="+addr)
+		"interface="+d.name, "address="+addr)
 }
 
 func (d *wintunDevice) SetMTU(mtu int) error {
-	return execCmd("netsh", "interface", "ipv4", "set", "subinterface",
-		"name="+d.name, fmt.Sprintf("mtu=%d", mtu))
+	if err := execCmd("netsh", "interface", "ipv4", "set", "subinterface",
+		"name="+d.name, fmt.Sprintf("mtu=%d", mtu)); err != nil {
+		return err
+	}
+	return execCmd("netsh", "interface", "ipv6", "set", "subinterface",
+		"interface="+d.name, fmt.Sprintf("mtu=%d", mtu))
 }
 
 // ensureWintunDLL extracts the embedded wintun.dll to the executable's

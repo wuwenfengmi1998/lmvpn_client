@@ -75,7 +75,8 @@ func cidrToV6Prefix(cidr string) (network, prefix string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	return ipNet.IP.String(), fmt.Sprintf("%d", ipNet.Mask), nil
+	ones, _ := ipNet.Mask.Size()
+	return ipNet.IP.String(), fmt.Sprintf("%d", ones), nil
 }
 
 func addRoute6(cidr, iface string) error {
@@ -87,8 +88,8 @@ func addRoute6(cidr, iface string) error {
 	if err != nil {
 		return err
 	}
-	return runCmd("netsh", "interface", "ipv6", "add", "route",
-		network+"/"+prefix, "interface="+fmt.Sprintf("%d", idx), "metric=1")
+	return runCmd("route", "-6", "add", network+"/"+prefix, "::",
+		"if", fmt.Sprintf("%d", idx), "metric", "1")
 }
 
 func deleteRoute6(cidr, iface string) error {
@@ -96,12 +97,7 @@ func deleteRoute6(cidr, iface string) error {
 	if err != nil {
 		return err
 	}
-	idx, err := ifaceIndex(iface)
-	if err != nil {
-		return err
-	}
-	return runCmd("netsh", "interface", "ipv6", "delete", "route",
-		network+"/"+prefix, "interface="+fmt.Sprintf("%d", idx))
+	return runCmd("route", "-6", "delete", network+"/"+prefix, "::")
 }
 
 func addRouteVia6(cidr, gateway string) error {
@@ -109,8 +105,7 @@ func addRouteVia6(cidr, gateway string) error {
 	if err != nil {
 		return err
 	}
-	return runCmd("netsh", "interface", "ipv6", "add", "route",
-		network+"/"+prefix, gateway, "metric=1")
+	return runCmd("route", "-6", "add", network+"/"+prefix, gateway, "metric", "1")
 }
 
 func deleteRouteVia6(cidr, gateway string) error {
@@ -118,8 +113,7 @@ func deleteRouteVia6(cidr, gateway string) error {
 	if err != nil {
 		return err
 	}
-	return runCmd("netsh", "interface", "ipv6", "delete", "route",
-		network+"/"+prefix, gateway)
+	return runCmd("route", "-6", "delete", network+"/"+prefix, gateway)
 }
 
 // --- Default gateway ---
@@ -133,7 +127,7 @@ func defaultGateway() (string, error) {
 }
 
 func defaultGateway6() (string, error) {
-	out, err := exec.Command("route", "-6", "print", "::").Output()
+	out, err := exec.Command("route", "-6", "print").Output()
 	if err != nil {
 		return "", err
 	}

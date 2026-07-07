@@ -138,12 +138,14 @@ func (m *Manager) applyFull() error {
 	}
 
 	// Bypass: server's public IPv6 via the original v6 gateway.
+	// Non-fatal: if this fails, full-tunnel routes are still added.
 	if v6 != "" && gw6 != "" {
 		bypassSpec := v6 + "/128"
 		if err := addRouteVia6(bypassSpec, gw6); err != nil {
-			return fmt.Errorf("add server bypass6 route: %w", err)
+			m.serverBypass6 = false
+		} else {
+			m.serverBypass6 = true
 		}
-		m.serverBypass6 = true
 	}
 
 	// Two /1 routes cover the entire IPv4 space and are more specific
