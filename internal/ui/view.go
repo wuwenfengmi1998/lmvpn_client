@@ -1,7 +1,9 @@
 package ui
 
 import (
+	_ "embed"
 	"fmt"
+	"net/url"
 	"time"
 
 	"lmvpn/internal/i18n"
@@ -11,8 +13,12 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
+
+//go:embed github.svg
+var githubIconBytes []byte
 
 // showError displays a titled error dialog.
 func showError(title, message string, parent fyne.Window) {
@@ -77,14 +83,29 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 		a.connectBtn, a.disconnectBtn,
 	)
 
-	return container.NewVBox(
+	githubBtn := widget.NewButtonWithIcon("", fyne.NewStaticResource("github.svg", githubIconBytes), func() {
+		u, err := url.Parse("https://github.com/wuwenfengmi1998/lmvpn_client")
+		if err != nil {
+			return
+		}
+		_ = a.fyneApp.OpenURL(u)
+	})
+
+	content := container.NewVBox(
 		widget.NewLabel(i18n.T("ProfileLabel")),
 		a.profileSelect,
 		buttons,
 		profileListBtn,
 		statusCard,
-		widget.NewLabel(fmt.Sprintf("v%s", Version)),
 	)
+
+	bottomBar := container.NewHBox(
+		widget.NewLabel(fmt.Sprintf("v%s", Version)),
+		layout.NewSpacer(),
+		githubBtn,
+	)
+
+	return container.NewBorder(nil, bottomBar, nil, nil, content)
 }
 
 // onConnect handles the Connect button click.
