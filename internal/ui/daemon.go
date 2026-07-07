@@ -10,6 +10,7 @@ import (
 	"lmvpn/internal/ipc"
 	"lmvpn/internal/log"
 	"lmvpn/internal/paths"
+	"lmvpn/internal/version"
 )
 
 // ensureDaemon checks if the daemon is running and launches it (as
@@ -25,9 +26,27 @@ import (
 // The --daemon-bin flag tells daemon-launch where to find lmvpnd. If
 // not given, daemon-launch auto-detects it relative to its own path.
 func ensureDaemon() (*ipc.Client, error) {
-	// Fast path: daemon already running.
+	// Fast path: a daemon is already running. Verify its build version
+	// matches ours; if not, it's a stale process from a previous build
+	// and must be restarted so the new code takes effect.
 	if c, err := ipc.Dial(); err == nil {
-		return c, nil
+		if ver, qerr := c.QueryVersion(); qerr == nil && ver == version.Version {
+			return c, nil
+		} else {
+			log.L().Info("stale daemon detected, restarting",
+				"got", ver, "expected", version.Version, "query_err", qerr)
+			_ = ipc.SendShutdown(c)
+			c.Close()
+			// Wait for the old daemon to exit and release the socket.
+			for i := 0; i < 30; i++ {
+				time.Sleep(100 * time.Millisecond)
+				if cc, err := ipc.Dial(); err == nil {
+					cc.Close()
+				} else {
+					break // socket gone
+				}
+			}
+		}
 	}
 
 	exe, err := os.Executable()
@@ -78,7 +97,7 @@ func ensureDaemon() (*ipc.Client, error) {
 }
 
 // shellQuote wraps a string in single quotes for shell safety.
-// Embedded single quotes are escaped using the '\'' pattern.
+// Embedded single quotes are escaped using the '\” pattern.
 func shellQuote(s string) string {
 	result := "'"
 	for _, r := range s {

@@ -26,6 +26,7 @@ import (
 	"lmvpn/internal/model"
 	"lmvpn/internal/paths"
 	"lmvpn/internal/stats"
+	"lmvpn/internal/version"
 	"lmvpn/internal/vpn"
 )
 
@@ -113,6 +114,8 @@ func (d *daemon) handle(conn net.Conn, req ipc.Request) {
 			d.server.Broadcast(ipc.Event{Event: ipc.EvStats, Stats: &snap})
 		}
 		_ = ipc.WriteOK(conn)
+	case ipc.CmdVersion:
+		_ = ipc.WriteVersion(conn, version.Version)
 	default:
 		_ = ipc.WriteErr(conn, "unknown command: "+req.Cmd)
 	}

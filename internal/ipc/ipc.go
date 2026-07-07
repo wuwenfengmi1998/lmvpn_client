@@ -29,6 +29,7 @@ const (
 	CmdStop     = "stop"
 	CmdShutdown = "shutdown"
 	CmdStats    = "stats"
+	CmdVersion  = "version" // query daemon build version
 )
 
 // Event types sent from daemon to GUI.
@@ -49,8 +50,8 @@ type Request struct {
 // package (which needs root-only TUN) into the GUI.
 type ClientConfig struct {
 	ServerURL   string   `json:"server_url"`
-	SNIHost     string   `json:"sni_host"`    // TLS SNI hostname for CDN
-	ServerIPs   []string `json:"server_ips"`  // CDN edge IP list for failover
+	SNIHost     string   `json:"sni_host"`   // TLS SNI hostname for CDN
+	ServerIPs   []string `json:"server_ips"` // CDN edge IP list for failover
 	Username    string   `json:"username"`
 	Password    string   `json:"password"`
 	Token       string   `json:"token"`
@@ -203,8 +204,9 @@ func (c *Client) Close() error { return c.conn.Close() }
 
 // Response is a simple ack/error reply to a command.
 type Response struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
+	Version string `json:"version,omitempty"` // set for CmdVersion replies
 }
 
 // WriteOK sends a success response to a connection.
@@ -230,6 +232,28 @@ func SendStop(c *Client) error {
 // SendShutdown is a convenience helper for sending a shutdown command.
 func SendShutdown(c *Client) error {
 	return c.Send(Request{Cmd: CmdShutdown})
+}
+
+// WriteVersion sends a version response to a connection.
+func WriteVersion(conn net.Conn, ver string) error {
+	return writeMsg(conn, Response{OK: true, Version: ver})
+}
+
+// QueryVersion sends a CmdVersion request and reads the daemon's
+// build version. It must be called before any VPN session starts (so
+// no Event messages are in flight on the connection).
+func (c *Client) QueryVersion() (string, error) {
+	if err := c.Send(Request{Cmd: CmdVersion}); err != nil {
+		return "", err
+	}
+	var resp Response
+	if err := readMsg(c.r, &resp); err != nil {
+		return "", err
+	}
+	if !resp.OK {
+		return "", fmt.Errorf("version query failed: %s", resp.Error)
+	}
+	return resp.Version, nil
 }
 
 // RoutingModeFromIPC converts an IPC routing mode string to route.Mode.
