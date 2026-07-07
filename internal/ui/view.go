@@ -14,6 +14,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -83,7 +84,7 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 		a.connectBtn, a.disconnectBtn,
 	)
 
-	githubBtn := widget.NewButtonWithIcon("", fyne.NewStaticResource("github.svg", githubIconBytes), func() {
+	githubBtn := widget.NewButtonWithIcon("", theme.NewThemedResource(fyne.NewStaticResource("github.svg", githubIconBytes)), func() {
 		u, err := url.Parse("https://github.com/wuwenfengmi1998/lmvpn_client")
 		if err != nil {
 			return
