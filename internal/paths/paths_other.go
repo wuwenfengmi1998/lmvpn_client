@@ -1,4 +1,4 @@
-//go:build !darwin
+//go:build !darwin && !windows
 
 package paths
 
@@ -6,6 +6,10 @@ import (
 	"os"
 	"path/filepath"
 )
+
+// IPCSocketPath returns the path to the unix domain socket used for
+// GUI <-> daemon communication.
+func IPCSocketPath() string { return "/tmp/lmvpn.sock" }
 
 func init() {
 	home, _ := os.UserHomeDir()

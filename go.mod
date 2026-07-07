@@ -13,6 +13,8 @@ require (
 	modernc.org/sqlite v1.34.1
 )
 
+require golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
+
 require (
 	fyne.io/fyne/v2 v2.7.4
 	fyne.io/systray v1.12.1 // indirect

@@ -13,7 +13,7 @@ GIT_HASH    = $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 VERSION     = 0.3.4-$(GIT_HASH)
 LDFLAGS     = -s -w -X lmvpn/internal/version.Version=$(VERSION)
 
-.PHONY: all build app run daemon clean vet tidy fmt icon
+.PHONY: all build app run daemon clean vet tidy fmt icon build-windows
 
 ## all: build the .app bundle (default)
 all: app
@@ -80,3 +80,12 @@ fmt:
 ## clean: remove build artifacts
 clean:
 	rm -rf $(BUILD_DIR) $(APP_BUNDLE)
+
+## build-windows: cross-compile Windows x86_64 exes (requires mingw-w64)
+build-windows:
+	mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
+		$(GO) build -ldflags "$(LDFLAGS) -H windowsgui" -o $(BUILD_DIR)/$(GUI_BIN).exe ./cmd/lmvpn
+	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
+		$(GO) build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(DAEMON_BIN).exe ./cmd/lmvpnd
+	@echo "Built $(BUILD_DIR)/$(GUI_BIN).exe and $(BUILD_DIR)/$(DAEMON_BIN).exe"

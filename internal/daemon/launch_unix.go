@@ -1,3 +1,5 @@
+//go:build !windows
+
 package daemon
 
 import (
@@ -120,33 +122,4 @@ func Launch(userHome string, uid, gid int, daemonBin string) error {
 	return nil
 }
 
-// resolveDaemonBinary locates the lmvpnd binary relative to the
-// launcher's executable path. In a .app bundle, lmvpnd lives in the
-// same Contents/MacOS/ directory as lmvpn. In development, it lives
-// in the same build directory.
-func resolveDaemonBinary() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("resolve launcher executable: %w", err)
-	}
-
-	// Resolve any symlinks.
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		return "", fmt.Errorf("resolve symlink: %w", err)
-	}
-
-	dir := filepath.Dir(exe)
-	candidates := []string{
-		filepath.Join(dir, "lmvpnd"),
-		filepath.Join(dir, "lmvpn-daemon"),
-	}
-
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c, nil
-		}
-	}
-
-	return "", fmt.Errorf("could not find lmvpnd binary near %s (tried %v)", exe, candidates)
-}
+// resolveDaemonBinary is in launch_common.go.

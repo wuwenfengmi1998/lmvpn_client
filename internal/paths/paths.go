@@ -57,6 +57,4 @@ func LogFile() string { return Paths.Log + "/lmvpn.log" }
 // DaemonLogFile returns the path to the daemon log file.
 func DaemonLogFile() string { return Paths.Log + "/lmvpn-daemon.log" }
 
-// IPCSocketPath returns the path to the unix domain socket used for
-// GUI <-> daemon communication.
-func IPCSocketPath() string { return "/tmp/lmvpn.sock" }
+
