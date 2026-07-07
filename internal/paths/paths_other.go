@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 )
 
-// IPCSocketPath returns the path to the unix domain socket used for
-// GUI <-> daemon communication.
-func IPCSocketPath() string { return "/tmp/lmvpn.sock" }
+// IPCNetwork returns the transport network for GUI <-> daemon IPC.
+func IPCNetwork() string { return "unix" }
+
+// IPCAddress returns the listen/dial address for GUI <-> daemon IPC.
+func IPCAddress() string { return "/tmp/lmvpn.sock" }
 
 func init() {
 	home, _ := os.UserHomeDir()

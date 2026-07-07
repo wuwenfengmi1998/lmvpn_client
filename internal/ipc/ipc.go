@@ -100,15 +100,26 @@ type Server struct {
 }
 
 // NewServer creates (but does not start) the IPC server. It removes
-// any stale socket file first.
+// any stale socket file first (unix only).
 func NewServer() (*Server, error) {
-	_ = os.Remove(paths.IPCSocketPath())
-	l, err := net.Listen("unix", paths.IPCSocketPath())
+	netType := paths.IPCNetwork()
+	addr := paths.IPCAddress()
+
+	// Clean up stale unix socket file (not needed for TCP).
+	if netType == "unix" {
+		_ = os.Remove(addr)
+	}
+
+	l, err := net.Listen(netType, addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen ipc: %w", err)
 	}
-	// Mode 0660 so group members (admin) can connect.
-	_ = os.Chmod(paths.IPCSocketPath(), 0o660)
+
+	// Set socket permissions so group members can connect (unix only).
+	if netType == "unix" {
+		_ = os.Chmod(addr, 0o660)
+	}
+
 	return &Server{listener: l, clients: make(map[net.Conn]bool)}, nil
 }
 
@@ -178,7 +189,7 @@ type Client struct {
 
 // Dial connects to the daemon.
 func Dial() (*Client, error) {
-	conn, err := net.Dial("unix", paths.IPCSocketPath())
+	conn, err := net.Dial(paths.IPCNetwork(), paths.IPCAddress())
 	if err != nil {
 		return nil, fmt.Errorf("dial daemon: %w", err)
 	}

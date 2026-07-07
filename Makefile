@@ -13,7 +13,7 @@ GIT_HASH    = $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 VERSION     = 0.3.6-$(GIT_HASH)
 LDFLAGS     = -s -w -X lmvpn/internal/version.Version=$(VERSION)
 
-.PHONY: all build app run daemon clean vet tidy fmt icon icon-windows build-windows
+.PHONY: all build app run daemon clean vet tidy fmt icon icon-windows build-windows installer-windows
 
 ## all: build the .app bundle (default)
 all: app
@@ -96,3 +96,19 @@ build-windows: icon-windows
 	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
 		$(GO) build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(DAEMON_BIN).exe ./cmd/lmvpnd
 	@echo "Built $(BUILD_DIR)/$(GUI_BIN).exe and $(BUILD_DIR)/$(DAEMON_BIN).exe"
+
+## installer-windows: build exes and compile Inno Setup installer (.exe)
+## Requires ISCC on PATH (Windows) or Wine + Inno Setup 6 (macOS/Linux).
+installer-windows: build-windows
+	@echo "Compiling installer with version $(VERSION)..."
+	@if command -v ISCC >/dev/null 2>&1; then \
+		ISCC /DAppVersion=$(VERSION) installer/lmvpn.iss; \
+	elif command -v wine >/dev/null 2>&1; then \
+		wine "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion=$(VERSION) installer/lmvpn.iss; \
+	else \
+		echo "ERROR: ISCC not found. Install Inno Setup 6 on Windows,"; \
+		echo "       or install Wine + Inno Setup 6 on macOS/Linux."; \
+		echo "       Download: https://jrsoftware.org/isdl.php"; \
+		exit 1; \
+	fi
+	@echo "Installer: $(BUILD_DIR)/LMVPN-Setup-$(VERSION).exe"

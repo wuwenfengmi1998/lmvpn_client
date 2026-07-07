@@ -74,11 +74,14 @@ func ensureDaemon() (*ipc.Client, error) {
 
 	// Wait for the daemon to become reachable.
 	logFile := paths.DaemonLogFile()
-	for i := 0; i < 40; i++ {
+	for i := 0; i < 60; i++ {
 		time.Sleep(250 * time.Millisecond)
 		if c, err := ipc.Dial(); err == nil {
-			log.L().Info("daemon connected", "socket", paths.IPCSocketPath())
+			log.L().Info("daemon connected", "socket", paths.IPCAddress())
 			return c, nil
+		} else if i == 0 || i == 10 || i == 30 || i == 59 {
+			log.L().Warn("daemon not reachable yet, retrying",
+				"attempt", i+1, "socket", paths.IPCAddress(), "error", err)
 		}
 	}
 	return nil, fmt.Errorf("daemon did not become reachable (check %s)", logFile)

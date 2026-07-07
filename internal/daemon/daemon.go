@@ -60,8 +60,8 @@ func Run(userHome string, uid, gid int) error {
 	// Chown the IPC socket so the non-root GUI process can connect.
 	// This is the critical fix: without it, the socket is owned by
 	// root:wheel with mode 0660, and the user cannot dial it.
-	chownToUser(paths.IPCSocketPath(), uid, gid)
-	log.L().Info("daemon listening", "socket", paths.IPCSocketPath())
+	chownToUser(paths.IPCAddress(), uid, gid)
+	log.L().Info("daemon listening", "socket", paths.IPCAddress())
 
 	d := &daemon{server: server}
 

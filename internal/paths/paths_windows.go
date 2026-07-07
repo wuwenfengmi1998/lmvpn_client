@@ -7,12 +7,18 @@ import (
 	"path/filepath"
 )
 
-// IPCSocketPath returns the path to the unix domain socket used for
-// GUI <-> daemon communication. On Windows 10 1803+ AF_UNIX is
-// supported; the socket is placed in the user's temp directory.
-func IPCSocketPath() string {
-	return filepath.Join(os.TempDir(), "lmvpn.sock")
-}
+// IPCNetwork returns the transport network for GUI <-> daemon IPC.
+// Windows uses TCP because AF_UNIX sockets enforce mandatory
+// integrity-level checks: a socket created by the elevated daemon
+// (High Integrity) cannot be connected to by the non-elevated GUI
+// (Medium Integrity). TCP on 127.0.0.1 has no such restriction.
+func IPCNetwork() string { return "tcp" }
+
+// IPCAddress returns the listen/dial address for GUI <-> daemon IPC.
+// On Windows this is a TCP address on localhost.
+const ipcPort = "18923"
+
+func IPCAddress() string { return "127.0.0.1:" + ipcPort }
 
 func init() {
 	home, _ := os.UserHomeDir()

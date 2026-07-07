@@ -15,7 +15,7 @@ const daemonBinaryName = "lmvpnd.exe"
 // launchElevated launches the daemon-launch subcommand with UAC
 // elevation via ShellExecute "runas" on Windows.
 func launchElevated(exe, daemonBin, home string, uid, gid int) error {
-	args := fmt.Sprintf("daemon-launch --user-home %s --uid %d --gid %d --daemon-bin %s",
+	args := fmt.Sprintf("daemon-launch --user-home \"%s\" --uid %d --gid %d --daemon-bin \"%s\"",
 		home, uid, gid, daemonBin)
 
 	shell32 := syscall.NewLazyDLL("shell32.dll")
