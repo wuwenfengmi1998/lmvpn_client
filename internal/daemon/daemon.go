@@ -153,6 +153,9 @@ func (d *daemon) startSession(conn net.Conn, req ipc.Request) {
 			s := snap
 			d.server.Broadcast(ipc.Event{Event: ipc.EvStats, Stats: &s})
 		},
+		func(code string, msg string) {
+			d.server.Broadcast(ipc.Event{Event: ipc.EvError, Code: code, Message: msg})
+		},
 	)
 
 	if err := d.session.Connect(ctx, cfg); err != nil {

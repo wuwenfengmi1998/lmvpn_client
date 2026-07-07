@@ -66,6 +66,7 @@ type Event struct {
 	Event   string          `json:"event"`
 	State   string          `json:"state,omitempty"`
 	Stats   *stats.Snapshot `json:"stats,omitempty"`
+	Code    string          `json:"code,omitempty"` // stable auth-error code for EvError
 	Message string          `json:"message,omitempty"`
 }
 

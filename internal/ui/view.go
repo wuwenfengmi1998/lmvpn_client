@@ -241,11 +241,32 @@ func (a *App) eventLoop() {
 			}
 		case ipc.EvError:
 			fyne.Do(func() {
-				if ev.Message != "" {
-					showError(i18n.T("DlgVPNError"), ev.Message, a.window)
+				msg := authErrorMessage(ev.Code, ev.Message)
+				if msg != "" {
+					showError(i18n.T("DlgAuthError"), msg, a.window)
 				}
 			})
 		}
+	}
+}
+
+// authErrorMessage maps a stable auth-error code (carried by the EvError
+// IPC event from the daemon) to a localized user-facing string. For an
+// unknown or empty code it falls back to the raw server message.
+func authErrorMessage(code, fallback string) string {
+	switch code {
+	case "wrong_credentials":
+		return i18n.T("AuthErrWrongCredentials")
+	case "user_disabled":
+		return i18n.T("AuthErrUserDisabled")
+	case "token_invalid":
+		return i18n.T("AuthErrTokenInvalid")
+	case "rate_limited":
+		return i18n.T("AuthErrRateLimited")
+	case "malformed":
+		return i18n.T("AuthErrMalformed")
+	default:
+		return fallback
 	}
 }
 

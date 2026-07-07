@@ -69,3 +69,39 @@ type AuthResponse struct {
 func IsError(msgType string) bool {
 	return msgType == TypeAuthErr || msgType == TypeError
 }
+
+// AuthErrorCode is a stable, locale-independent identifier for a fatal
+// authentication failure. It is derived from the server's auth_err
+// message (or HTTP status for the JWT login path) and carried over IPC
+// to the GUI, which maps it to a localized user-facing string.
+type AuthErrorCode string
+
+const (
+	AuthCodeWrongCredentials AuthErrorCode = "wrong_credentials" // 用户名或密码错误 / HTTP 401,403
+	AuthCodeUserDisabled     AuthErrorCode = "user_disabled"     // 用户不存在或已禁用
+	AuthCodeTokenInvalid     AuthErrorCode = "token_invalid"     // 令牌无效或已过期
+	AuthCodeRateLimited      AuthErrorCode = "rate_limited"      // 认证尝试过于频繁 / HTTP 429
+	AuthCodeMalformed        AuthErrorCode = "malformed"         // 消息格式错误
+)
+
+// AuthErrorCodeFromMessage maps a server auth_err message string to a
+// stable AuthErrorCode. It returns the empty string for an unrecognized
+// message, in which case the caller should treat the failure as
+// non-categorical (and typically still fatal, since the server closes
+// the connection after auth_err).
+func AuthErrorCodeFromMessage(msg string) AuthErrorCode {
+	switch msg {
+	case "用户名或密码错误":
+		return AuthCodeWrongCredentials
+	case "用户不存在或已禁用":
+		return AuthCodeUserDisabled
+	case "令牌无效或已过期":
+		return AuthCodeTokenInvalid
+	case "认证尝试过于频繁，请稍后再试":
+		return AuthCodeRateLimited
+	case "消息格式错误":
+		return AuthCodeMalformed
+	default:
+		return ""
+	}
+}

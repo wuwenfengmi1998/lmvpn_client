@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -44,6 +45,7 @@ type SessionManager struct {
 	stats   *stats.Stats
 	onState func(stats.State)
 	onStats func(stats.Snapshot)
+	onError func(code string, msg string)
 
 	mu       sync.Mutex
 	running  bool
@@ -67,12 +69,15 @@ type SessionManager struct {
 
 // New creates a SessionManager. The onState callback (if non-nil) is
 // invoked on every state transition. The onStats callback (if non-nil)
-// is invoked periodically while connected.
-func New(onState func(stats.State), onStats func(stats.Snapshot)) *SessionManager {
+// is invoked periodically while connected. The onError callback (if
+// non-nil) is invoked once when a fatal, non-retryable error (such as
+// an authentication failure) terminates the session.
+func New(onState func(stats.State), onStats func(stats.Snapshot), onError func(string, string)) *SessionManager {
 	return &SessionManager{
 		stats:   stats.New(),
 		onState: onState,
 		onStats: onStats,
+		onError: onError,
 	}
 }
 
@@ -126,7 +131,12 @@ func (sm *SessionManager) Disconnect() {
 // run is the main session loop with exponential-backoff reconnection
 // and CDN IP failover.
 func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
-	defer sm.setState(stats.StateDisconnected)
+	fatal := false
+	defer func() {
+		if !fatal {
+			sm.setState(stats.StateDisconnected)
+		}
+	}()
 
 	backoff := time.Second
 	maxBackoff := 60 * time.Second
@@ -153,6 +163,22 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 
 		if err != nil {
 			log.L().Error("VPN connection failed", "error", err)
+
+			// A fatal authentication failure (wrong password, disabled
+			// account, expired token, rate limit) is not retryable:
+			// stop the loop and surface the reason to the user instead
+			// of hammering the server forever.
+			if code, msg, isFatal := fatalAuthError(err); isFatal {
+				log.L().Warn("fatal auth error, stopping reconnect", "code", code, "message", msg)
+				sm.setState(stats.StateError)
+				if sm.onError != nil {
+					sm.onError(string(code), msg)
+				}
+				fatal = true
+				sm.cleanup()
+				return
+			}
+
 			sm.setState(stats.StateReconnecting)
 
 			// Try next CDN IP immediately.
@@ -179,6 +205,41 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 			}
 		}
 	}
+}
+
+// fatalAuthError inspects err and, if it represents a permanent
+// authentication failure that should not be retried, returns the
+// stable error code, the raw server message, and true. It recognises
+// all three auth-failure shapes produced by the transport/auth layers:
+//   - *transport.AuthError        (WebSocket auth_err at the auth stage)
+//   - *transport.ServerError      (auth_err at the init stage, JWT path)
+//   - *auth.LoginError            (HTTP /api/login failure, JWT path)
+//
+// errors.As transparently unwraps fmt.Errorf("...: %w", err) chains,
+// so the wrapped LoginError returned by connectOnce is matched too.
+// A non-empty code is required: an auth_err with an unrecognized
+// message is treated as non-fatal so the loop falls back to retrying
+// (the server still closed the connection, but we lack a categorical
+// reason to give up).
+func fatalAuthError(err error) (protocol.AuthErrorCode, string, bool) {
+	var authErr *transport.AuthError
+	if errors.As(err, &authErr) {
+		return authErr.Code, authErr.Message, authErr.Code != ""
+	}
+	var serverErr *transport.ServerError
+	if errors.As(err, &serverErr) && serverErr.Type == protocol.TypeAuthErr {
+		return serverErr.Code, serverErr.Message, serverErr.Code != ""
+	}
+	var loginErr *auth.LoginError
+	if errors.As(err, &loginErr) {
+		switch loginErr.Code {
+		case http.StatusTooManyRequests:
+			return protocol.AuthCodeRateLimited, loginErr.Message, true
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return protocol.AuthCodeWrongCredentials, loginErr.Message, true
+		}
+	}
+	return "", "", false
 }
 
 // connectOnce performs a single connection lifecycle: authenticate,

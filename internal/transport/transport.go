@@ -158,7 +158,7 @@ func (c *Conn) passwordAuth(username, password string) error {
 		return fmt.Errorf("parse auth response: %w", err)
 	}
 	if resp.Type == protocol.TypeAuthErr {
-		return &AuthError{Message: resp.Message}
+		return &AuthError{Message: resp.Message, Code: protocol.AuthErrorCodeFromMessage(resp.Message)}
 	}
 	if resp.Type != protocol.TypeAuthOK {
 		return fmt.Errorf("unexpected auth response type: %s", resp.Type)
@@ -186,7 +186,11 @@ func (c *Conn) readInit() (protocol.InitMessage, error) {
 		return protocol.InitMessage{}, fmt.Errorf("parse init/error: %w (raw: %s)", err, data)
 	}
 	if ctrl.Type == protocol.TypeError || ctrl.Type == protocol.TypeAuthErr {
-		return protocol.InitMessage{}, &ServerError{Type: ctrl.Type, Message: ctrl.Message}
+		return protocol.InitMessage{}, &ServerError{
+			Type:    ctrl.Type,
+			Message: ctrl.Message,
+			Code:    protocol.AuthErrorCodeFromMessage(ctrl.Message),
+		}
 	}
 	return protocol.InitMessage{}, fmt.Errorf("unexpected message type: %s", ctrl.Type)
 }
@@ -254,7 +258,10 @@ func (c *Conn) Close() error {
 }
 
 // AuthError indicates authentication failure (auth_err from server).
-type AuthError struct{ Message string }
+type AuthError struct {
+	Message string
+	Code    protocol.AuthErrorCode
+}
 
 func (e *AuthError) Error() string { return "auth failed: " + e.Message }
 
@@ -262,6 +269,7 @@ func (e *AuthError) Error() string { return "auth failed: " + e.Message }
 type ServerError struct {
 	Type    string
 	Message string
+	Code    protocol.AuthErrorCode
 }
 
 func (e *ServerError) Error() string {
