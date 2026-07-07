@@ -9,7 +9,9 @@ APP_BUNDLE  = $(APP_NAME).app
 
 GO          = go
 CGO_ENABLED = 1
-SEMVER      = 0.3.9
+WINDRES     ?= x86_64-w64-mingw32-windres
+MINGW_CC    ?= x86_64-w64-mingw32-gcc
+SEMVER      ?= 0.3.9
 GIT_HASH    = $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 VERSION     = $(SEMVER)-$(GIT_HASH)
 LDFLAGS     = -s -w -X lmvpn/internal/version.Version=$(VERSION)
@@ -88,16 +90,17 @@ clean:
 ## icon-windows: generate icon.ico and compile Windows resource (.syso)
 icon-windows:
 	go run resources/genico/main.go
-	x86_64-w64-mingw32-windres -i resources/lmvpn.rc -O coff -o cmd/lmvpn/resource_windows_amd64.syso
-	x86_64-w64-mingw32-windres -i resources/lmvpn.rc -O coff -o cmd/lmvpnd/resource_windows_amd64.syso
+	$(WINDRES) -i resources/lmvpn.rc -O coff -o cmd/lmvpn/resource_windows_amd64.syso
+	$(WINDRES) -i resources/lmvpn.rc -O coff -o cmd/lmvpnd/resource_windows_amd64.syso
 	@echo "Generated Windows icon resources"
 
 ## build-windows: cross-compile Windows x86_64 exes (requires mingw-w64)
-build-windows: icon-windows
+## The .syso icon resources are committed in cmd/*/; run `make icon-windows` to regenerate.
+build-windows:
 	mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
+	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=$(MINGW_CC) \
 		$(GO) build -ldflags "$(LDFLAGS) -H windowsgui" -o $(BUILD_DIR)/$(GUI_BIN).exe ./cmd/lmvpn
-	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
+	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=$(MINGW_CC) \
 		$(GO) build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(DAEMON_BIN).exe ./cmd/lmvpnd
 	@echo "Built $(BUILD_DIR)/$(GUI_BIN).exe and $(BUILD_DIR)/$(DAEMON_BIN).exe"
 
