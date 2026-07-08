@@ -19,6 +19,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"lmvpn/internal/ipc"
@@ -92,6 +93,7 @@ func chownToUser(path string, uid, gid int) {
 
 type daemon struct {
 	server  *ipc.Server
+	mu      sync.Mutex
 	session *vpn.SessionManager
 	cancel  context.CancelFunc
 }
@@ -109,8 +111,11 @@ func (d *daemon) handle(conn net.Conn, req ipc.Request) {
 		d.server.Close()
 		os.Exit(0)
 	case ipc.CmdStats:
-		if d.session != nil {
-			snap := d.session.Stats().Snapshot()
+		d.mu.Lock()
+		sess := d.session
+		d.mu.Unlock()
+		if sess != nil {
+			snap := sess.Stats().Snapshot()
 			d.server.Broadcast(ipc.Event{Event: ipc.EvStats, Stats: &snap})
 		}
 		_ = ipc.WriteOK(conn)
@@ -122,12 +127,14 @@ func (d *daemon) handle(conn net.Conn, req ipc.Request) {
 }
 
 func (d *daemon) startSession(conn net.Conn, req ipc.Request) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if req.Config == nil {
 		_ = ipc.WriteErr(conn, "missing config")
 		return
 	}
 	if d.session != nil {
-		d.stopSession()
+		d.stopSessionLocked()
 	}
 
 	cfg := vpn.SessionConfig{
@@ -170,6 +177,12 @@ func (d *daemon) startSession(conn net.Conn, req ipc.Request) {
 }
 
 func (d *daemon) stopSession() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.stopSessionLocked()
+}
+
+func (d *daemon) stopSessionLocked() {
 	if d.cancel != nil {
 		d.cancel()
 		d.cancel = nil

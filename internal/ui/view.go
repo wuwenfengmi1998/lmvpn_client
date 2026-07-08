@@ -39,6 +39,13 @@ func (a *App) setConnButtons(connectEnabled, disconnectEnabled bool) {
 	} else {
 		a.disconnectBtn.Disable()
 	}
+	if a.profileSelect != nil {
+		if connectEnabled {
+			a.profileSelect.Enable()
+		} else {
+			a.profileSelect.Disable()
+		}
+	}
 	a.setupTray()
 }
 
@@ -132,8 +139,13 @@ func (a *App) onConnect() {
 		}
 
 		a.mu.Lock()
+		oldClient := a.ipcClient
 		a.ipcClient = client
 		a.mu.Unlock()
+		if oldClient != nil {
+			_ = ipc.SendStop(oldClient)
+			oldClient.Close()
+		}
 
 		// Get password from keychain.
 		password, err := a.kc.GetPassword(a.currentProfile.Name)
@@ -190,13 +202,24 @@ func (a *App) onConnect() {
 func (a *App) onDisconnect() {
 	a.mu.Lock()
 	client := a.ipcClient
+	a.ipcClient = nil
 	a.mu.Unlock()
 	if client == nil {
 		return
 	}
 	_ = ipc.SendStop(client)
+	client.Close()
 	a.setConnButtons(true, false)
 	a.stateLabel.SetText(i18n.T("StateDisconnected"))
+	a.ipLabel.SetText(i18n.T("IpNone"))
+	a.ip6Label.SetText(i18n.T("Ip6None"))
+	a.uptimeLabel.SetText(i18n.T("UptimeNone"))
+	a.rxV4Label.SetText(i18n.T("RxV4Zero"))
+	a.txV4Label.SetText(i18n.T("TxV4Zero"))
+	a.rxV6Label.SetText(i18n.T("RxV6Zero"))
+	a.txV6Label.SetText(i18n.T("TxV6Zero"))
+	a.rxTotalLabel.SetText(i18n.T("RxTotalZero"))
+	a.txTotalLabel.SetText(i18n.T("TxTotalZero"))
 }
 
 // eventLoop reads IPC events from the daemon and updates the UI.
@@ -234,17 +257,33 @@ func (a *App) eventLoop() {
 		switch ev.Event {
 		case ipc.EvState:
 			fyne.Do(func() {
-				a.applyState(ev.State)
+				a.mu.Lock()
+				current := a.ipcClient
+				a.mu.Unlock()
+				if current == client {
+					a.applyState(ev.State)
+				}
 			})
 		case ipc.EvStats:
 			if ev.Stats != nil {
 				s := *ev.Stats
 				fyne.Do(func() {
-					a.applyStats(s)
+					a.mu.Lock()
+					current := a.ipcClient
+					a.mu.Unlock()
+					if current == client {
+						a.applyStats(s)
+					}
 				})
 			}
 		case ipc.EvError:
 			fyne.Do(func() {
+				a.mu.Lock()
+				current := a.ipcClient
+				a.mu.Unlock()
+				if current != client {
+					return
+				}
 				if ev.Code == "tls_error" {
 					showError(i18n.T("DlgTLSError"),
 						i18n.T("TLSErrorVerification")+"\n\n"+ev.Message, a.window)

@@ -60,6 +60,7 @@ type SessionManager struct {
 	dev      tun.Device
 	routeMgr *route.Manager
 	conn     *transport.Conn
+	done     chan struct{}
 
 	// EWMA speed smoothing state. Only touched by reportStats (single
 	// goroutine), so no lock needed. ewma* fields hold the smoothed
@@ -106,6 +107,7 @@ func (sm *SessionManager) Connect(ctx context.Context, cfg SessionConfig) error 
 	ctx, cancel := context.WithCancel(ctx)
 	sm.cancel = cancel
 	sm.running = true
+	sm.done = make(chan struct{})
 	sm.mu.Unlock()
 
 	go sm.run(ctx, cfg)
@@ -126,12 +128,22 @@ func (sm *SessionManager) Disconnect() {
 	if cancel != nil {
 		cancel()
 	}
-	// Close the transport to unblock the packet pump.
+	// Close the transport to unblock the WS->TUN goroutine.
 	sm.mu.Lock()
 	conn := sm.conn
+	dev := sm.dev
 	sm.mu.Unlock()
 	if conn != nil {
 		conn.Close()
+	}
+	// Close the TUN device to unblock the TUN->WS goroutine's dev.Read().
+	if dev != nil {
+		dev.Close()
+	}
+	// Wait for the run goroutine to fully exit so that cleanup
+	// (route removal, TUN teardown) is complete before returning.
+	if sm.done != nil {
+		<-sm.done
 	}
 }
 
@@ -139,8 +151,9 @@ func (sm *SessionManager) Disconnect() {
 // and CDN IP failover.
 func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 	fatal := false
+	defer close(sm.done)
 	defer func() {
-		if !fatal {
+		if !fatal && ctx.Err() == nil {
 			sm.setState(stats.StateDisconnected)
 		}
 	}()
@@ -154,6 +167,7 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 
 	for {
 		if ctx.Err() != nil {
+			sm.cleanup()
 			return
 		}
 
