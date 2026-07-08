@@ -20,6 +20,13 @@ const ipcPort = "18923"
 
 func IPCAddress() string { return "127.0.0.1:" + ipcPort }
 
+// GUILockNetwork returns the transport for the GUI single-instance lock.
+// Windows uses TCP (same reason as IPC: AF_UNIX integrity-level checks).
+func GUILockNetwork() string { return "tcp" }
+
+// GUILockAddress returns the address for the GUI single-instance lock.
+func GUILockAddress() string { return "127.0.0.1:18924" }
+
 func init() {
 	home, _ := os.UserHomeDir()
 	recomputePaths(home)

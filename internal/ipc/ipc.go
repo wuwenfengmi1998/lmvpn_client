@@ -109,8 +109,16 @@ func NewServer() (*Server, error) {
 	netType := paths.IPCNetwork()
 	addr := paths.IPCAddress()
 
-	// Clean up stale unix socket file (not needed for TCP).
+	// Guard against a second daemon instance on unix: probe the
+	// socket before removing it. If the dial succeeds, another
+	// daemon is alive and owns the socket - refuse to start so we
+	// don't silently orphan it. Only remove the file when the dial
+	// fails (stale socket from a crashed process).
 	if netType == "unix" {
+		if c, derr := net.Dial(netType, addr); derr == nil {
+			c.Close()
+			return nil, fmt.Errorf("daemon already running on %s", addr)
+		}
 		_ = os.Remove(addr)
 	}
 

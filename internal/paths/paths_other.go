@@ -13,6 +13,12 @@ func IPCNetwork() string { return "unix" }
 // IPCAddress returns the listen/dial address for GUI <-> daemon IPC.
 func IPCAddress() string { return "/tmp/lmvpn.sock" }
 
+// GUILockNetwork returns the transport for the GUI single-instance lock.
+func GUILockNetwork() string { return "unix" }
+
+// GUILockAddress returns the address for the GUI single-instance lock.
+func GUILockAddress() string { return Paths.Data + "/gui.sock" }
+
 func init() {
 	home, _ := os.UserHomeDir()
 	recomputePaths(home)

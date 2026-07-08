@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"errors"
 	"os"
 	"sync"
 
 	"lmvpn/internal/config"
 	"lmvpn/internal/db"
 	"lmvpn/internal/i18n"
+	"lmvpn/internal/instance"
 	"lmvpn/internal/ipc"
 	"lmvpn/internal/keychain"
 	"lmvpn/internal/log"
@@ -54,6 +56,7 @@ type App struct {
 	currentProfile  *model.ServerProfile
 	defaultProfileID int64
 	langSetting     string
+	windowHidden    bool
 }
 
 // Run initialises and starts the GUI application.
@@ -65,6 +68,17 @@ func Run() {
 
 	// Logging.
 	log.Init(log.RoleGUI, paths.LogFile())
+
+	// Single-instance enforcement: the first instance holds the lock;
+	// a second instance signals "focus" to the first and exits.
+	focusCh, err := instance.Acquire()
+	if err != nil {
+		if errors.Is(err, instance.ErrAlreadyRunning) {
+			log.L().Info("another instance is running, exiting")
+			os.Exit(0)
+		}
+		log.L().Warn("instance lock failed, continuing", "error", err)
+	}
 
 	// Database.
 	store, err := db.Open()
@@ -101,6 +115,44 @@ func Run() {
 	// System tray.
 	a.setupTray()
 
+	// Listen for "focus" signals from second instances and bring the
+	// window to the front.
+	if focusCh != nil {
+		go func() {
+			for range focusCh {
+				fyne.Do(func() {
+					a.windowHidden = false
+					showAndActivate()
+					a.window.Show()
+					a.window.RequestFocus()
+				})
+			}
+		}()
+	}
+
+	// Register a Cocoa handler so that re-opening the .app bundle
+	// (which does NOT start a new process on macOS) brings the hidden
+	// window back.  On other platforms this is a no-op.  This must be
+	// deferred until after the Fyne/GLFW event loop has started,
+	// because GLFWApplicationDelegate is not created until glfw.Init()
+	// runs inside runGL().
+	a.fyneApp.Lifecycle().SetOnStarted(func() {
+		onAppActive = func() {
+			if a.windowHidden {
+				a.windowHidden = false
+				showAndActivate()
+				fyne.Do(func() {
+					if a.windowHidden {
+						return
+					}
+					a.window.Show()
+					a.window.RequestFocus()
+				})
+			}
+		}
+		registerReopenHandler()
+	})
+
 	// Auto-connect if configured.
 	if cfg.AutoConnect && a.currentProfile != nil {
 		go func() {
@@ -111,6 +163,7 @@ func Run() {
 
 	a.window.SetCloseIntercept(func() {
 		if cfg.CloseToTray {
+			a.windowHidden = true
 			hideDockIcon()
 			a.window.Hide()
 		} else {
