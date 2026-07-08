@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"lmvpn/internal/i18n"
 	"lmvpn/internal/model"
@@ -268,6 +269,17 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 	if name == "" || host == "" || user == "" {
 		showError(i18n.T("DlgValidationTitle"), i18n.T("DlgValidationMsg"), a.window)
 		return false
+	}
+
+	if ips != "" {
+		tmp := &model.ServerProfile{ServerIPs: ips}
+		_, invalid := tmp.ValidateServerIPs()
+		if len(invalid) > 0 {
+			showError(i18n.T("DlgValidationTitle"),
+				fmt.Sprintf(i18n.T("DlgInvalidIPMsg"), strings.Join(invalid, ", ")),
+				a.window)
+			return false
+		}
 	}
 
 	port := parseIntDefault(portStr, 443)

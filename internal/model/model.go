@@ -4,6 +4,7 @@ package model
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"time"
 )
@@ -85,20 +86,31 @@ func (p *ServerProfile) BuildServerURL(ip ...string) string {
 	return fmt.Sprintf("%s://%s:%d%s", protocol, host, port, path)
 }
 
-// GetServerIPList parses ServerIPs into a string slice.
-func (p *ServerProfile) GetServerIPList() []string {
+// ValidateServerIPs parses ServerIPs, returning valid IP addresses
+// and any invalid entries (for UI error reporting).
+func (p *ServerProfile) ValidateServerIPs() (valid []string, invalid []string) {
 	if p.ServerIPs == "" {
-		return nil
+		return nil, nil
 	}
-	parts := strings.Split(p.ServerIPs, ",")
-	var out []string
-	for _, part := range parts {
+	for _, part := range strings.Split(p.ServerIPs, ",") {
 		s := strings.TrimSpace(part)
-		if s != "" {
-			out = append(out, s)
+		if s == "" {
+			continue
+		}
+		if net.ParseIP(s) != nil {
+			valid = append(valid, s)
+		} else {
+			invalid = append(invalid, s)
 		}
 	}
-	return out
+	return
+}
+
+// GetServerIPList returns only valid IP addresses from ServerIPs,
+// silently filtering out any malformed entries.
+func (p *ServerProfile) GetServerIPList() []string {
+	valid, _ := p.ValidateServerIPs()
+	return valid
 }
 
 // ConnectionStatus records the outcome of a connection attempt.

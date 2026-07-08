@@ -185,33 +185,45 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 		if err != nil {
 			log.L().Error("VPN connection failed", "error", err)
 
-			// A TLS certificate verification failure is not retryable:
-			// the cert won't change between attempts, so stop the
-			// loop and surface the reason to the user.
+			// A TLS certificate verification failure on the original
+			// hostname (ipIndex == 0) is not retryable: the cert won't
+			// change between attempts, so stop the loop and surface the
+			// reason to the user. On a CDN edge IP (ipIndex > 0) the
+			// TLS error likely means that IP points to a different
+			// server; skip it and try the next target.
 			if tlsconfig.IsTLSError(err) {
-				log.L().Warn("fatal TLS error, stopping reconnect", "error", err)
-				sm.setState(stats.StateError)
-				if sm.onError != nil {
-					sm.onError("tls_error", err.Error())
+				if ipIndex == 0 {
+					log.L().Warn("fatal TLS error, stopping reconnect", "error", err)
+					sm.setState(stats.StateError)
+					if sm.onError != nil {
+						sm.onError("tls_error", err.Error())
+					}
+					fatal = true
+					sm.cleanup()
+					return
 				}
-				fatal = true
-				sm.cleanup()
-				return
+				log.L().Warn("TLS error on CDN IP, skipping",
+					"index", ipIndex, "ip", targets[ipIndex], "error", err)
 			}
 
 			// A fatal authentication failure (wrong password, disabled
-			// account, expired token, rate limit) is not retryable:
-			// stop the loop and surface the reason to the user instead
-			// of hammering the server forever.
+			// account, expired token, rate limit) on the original
+			// hostname is not retryable. On a CDN edge IP it likely
+			// means the IP points to a different server that returned
+			// 401/403, so skip it instead of stopping the loop.
 			if code, msg, isFatal := fatalAuthError(err); isFatal {
-				log.L().Warn("fatal auth error, stopping reconnect", "code", code, "message", msg)
-				sm.setState(stats.StateError)
-				if sm.onError != nil {
-					sm.onError(string(code), msg)
+				if ipIndex == 0 {
+					log.L().Warn("fatal auth error, stopping reconnect", "code", code, "message", msg)
+					sm.setState(stats.StateError)
+					if sm.onError != nil {
+						sm.onError(string(code), msg)
+					}
+					fatal = true
+					sm.cleanup()
+					return
 				}
-				fatal = true
-				sm.cleanup()
-				return
+				log.L().Warn("auth error on CDN IP, skipping",
+					"index", ipIndex, "ip", targets[ipIndex], "code", code)
 			}
 
 			sm.setState(stats.StateReconnecting)
@@ -673,7 +685,14 @@ func wsURLToHTTP(wsURL string) (string, error) {
 
 // replaceHost substitutes the host portion of a URL string.
 // e.g. wss://host:443/ws with 1.2.3.4 → wss://1.2.3.4:443/ws
+// Bare IPv6 addresses are automatically bracketed:
+// wss://host:443/ws with 2001:db8::1 → wss://[2001:db8::1]:443/ws
 func replaceHost(rawURL, newHost string) string {
+	// Auto-bracket bare IPv6 addresses so the colons in the address
+	// are not confused with the port separator.
+	if ip := net.ParseIP(newHost); ip != nil && ip.To4() == nil && !strings.HasPrefix(newHost, "[") {
+		newHost = "[" + newHost + "]"
+	}
 	u := rawURL
 	for _, prefix := range []string{"wss://", "ws://"} {
 		if len(u) > len(prefix) && u[:len(prefix)] == prefix {
