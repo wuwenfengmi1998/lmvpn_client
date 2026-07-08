@@ -7,6 +7,4 @@ func hideDockIcon() {}
 
 func activateApp() {}
 
-func showAndActivate() {}
-
 func registerReopenHandler() {}

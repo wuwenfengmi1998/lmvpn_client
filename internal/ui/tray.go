@@ -62,7 +62,8 @@ func (a *App) setupTray() {
 		menu := fyne.NewMenu(i18n.T("WindowTitle"),
 		fyne.NewMenuItem(i18n.T("TrayShowWindow"), func() {
 			a.windowHidden = false
-			showAndActivate()
+			activateApp()
+			showDockIcon()
 			a.window.Show()
 			a.window.RequestFocus()
 		}),

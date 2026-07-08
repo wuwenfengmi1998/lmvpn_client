@@ -122,7 +122,8 @@ func Run() {
 			for range focusCh {
 				fyne.Do(func() {
 					a.windowHidden = false
-					showAndActivate()
+					activateApp()
+					showDockIcon()
 					a.window.Show()
 					a.window.RequestFocus()
 				})
@@ -140,7 +141,8 @@ func Run() {
 		onAppActive = func() {
 			if a.windowHidden {
 				a.windowHidden = false
-				showAndActivate()
+				activateApp()
+				showDockIcon()
 				fyne.Do(func() {
 					if a.windowHidden {
 						return

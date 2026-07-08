@@ -37,29 +37,6 @@ static void cmActivateApp(void) {
 	((void (*)(id, SEL, BOOL))objc_msgSend)(app, sel_getUid("activateIgnoringOtherApps:"), YES);
 }
 
-// cmShowAndActivate switches to regular activation policy (dock icon
-// visible), activates the app, and makes every NSWindow key+front.
-// This bypasses GLFW's glfwShowWindow (which uses orderFront:nil and
-// is unreliable during NSApplication activation-policy transitions).
-static void cmShowAndActivate(void) {
-	Class cls = objc_getClass("NSApplication");
-	id app = ((id (*)(Class, SEL))objc_msgSend)(cls, sel_getUid("sharedApplication"));
-	// Regular activation policy (dock icon visible).
-	((void (*)(id, SEL, long))objc_msgSend)(app, sel_getUid("setActivationPolicy:"), 0);
-	// Bring app to foreground.
-	((void (*)(id, SEL, BOOL))objc_msgSend)(app, sel_getUid("activateIgnoringOtherApps:"), YES);
-	// Make every window key and visible.  NSArray* windows = [app windows];
-	id windows = ((id (*)(id, SEL))objc_msgSend)(app, sel_getUid("windows"));
-	// NSUInteger count = [windows count];
-	unsigned long count = ((unsigned long (*)(id, SEL))objc_msgSend)(windows, sel_getUid("count"));
-	for (unsigned long i = 0; i < count; i++) {
-		// id w = [windows objectAtIndex:i];
-		id w = ((id (*)(id, SEL, unsigned long))objc_msgSend)(windows, sel_getUid("objectAtIndex:"), i);
-		// [w makeKeyAndOrderFront:nil];
-		((void (*)(id, SEL, id))objc_msgSend)(w, sel_getUid("makeKeyAndOrderFront:"), nil);
-	}
-}
-
 // cmRegisterReopenHandler adds applicationShouldHandleReopen:
 // hasVisibleWindows: to the GLFWApplicationDelegate class at runtime
 // (class_addMethod).  This lets us detect when macOS re-opens the
@@ -80,7 +57,5 @@ func showDockIcon() { C.setDockIconVisible(1) }
 func hideDockIcon() { C.setDockIconVisible(0) }
 
 func activateApp() { C.cmActivateApp() }
-
-func showAndActivate() { C.cmShowAndActivate() }
 
 func registerReopenHandler() { C.cmRegisterReopenHandler() }
