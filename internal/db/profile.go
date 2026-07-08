@@ -14,11 +14,13 @@ func (s *Store) CreateProfile(p *model.ServerProfile) (int64, error) {
 		`INSERT INTO server_profiles
 		   (name, protocol, host, server_ips, port, path,
 		    username, auth_mode, routing_mode,
-		    custom_cidrs, mtu_override, auto_connect)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		    custom_cidrs, mtu_override, auto_connect,
+		    tls_ca_cert, tls_ca_path, tls_insecure, tls_pinned_hash)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.Name, p.Protocol, p.Host, p.ServerIPs, p.Port, p.Path,
 		p.Username, p.AuthMode, p.RoutingMode,
 		p.CustomCIDRs, p.MTUOverride, p.AutoConnect,
+		p.TLSCACert, p.TLSCAPath, p.TLSInsecure, p.TLSPinnedHash,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert profile: %w", err)
@@ -36,11 +38,14 @@ func (s *Store) GetProfile(id int64) (*model.ServerProfile, error) {
 	err := s.db.QueryRow(
 		`SELECT id, name, protocol, host, server_ips, port, path,
 		        username, auth_mode, routing_mode,
-		        custom_cidrs, mtu_override, auto_connect, created_at, last_connected_at
+		        custom_cidrs, mtu_override, auto_connect,
+		        tls_ca_cert, tls_ca_path, tls_insecure, tls_pinned_hash,
+		        created_at, last_connected_at
 		 FROM server_profiles WHERE id = ?`, id,
 	).Scan(&p.ID, &p.Name, &p.Protocol, &p.Host, &p.ServerIPs, &p.Port, &p.Path,
 		&p.Username, &p.AuthMode, &p.RoutingMode, &p.CustomCIDRs, &p.MTUOverride,
-		&p.AutoConnect, &p.CreatedAt, &last)
+		&p.AutoConnect, &p.TLSCACert, &p.TLSCAPath, &p.TLSInsecure, &p.TLSPinnedHash,
+		&p.CreatedAt, &last)
 	if err != nil {
 		return nil, fmt.Errorf("get profile %d: %w", id, err)
 	}
@@ -55,7 +60,9 @@ func (s *Store) ListProfiles() ([]model.ServerProfile, error) {
 	rows, err := s.db.Query(
 		`SELECT id, name, protocol, host, server_ips, port, path,
 		        username, auth_mode, routing_mode,
-		        custom_cidrs, mtu_override, auto_connect, created_at, last_connected_at
+		        custom_cidrs, mtu_override, auto_connect,
+		        tls_ca_cert, tls_ca_path, tls_insecure, tls_pinned_hash,
+		        created_at, last_connected_at
 		 FROM server_profiles ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list profiles: %w", err)
@@ -68,7 +75,9 @@ func (s *Store) ListProfiles() ([]model.ServerProfile, error) {
 		var last sql.NullTime
 		if err := rows.Scan(&p.ID, &p.Name, &p.Protocol, &p.Host, &p.ServerIPs,
 			&p.Port, &p.Path, &p.Username, &p.AuthMode, &p.RoutingMode,
-			&p.CustomCIDRs, &p.MTUOverride, &p.AutoConnect, &p.CreatedAt, &last); err != nil {
+			&p.CustomCIDRs, &p.MTUOverride, &p.AutoConnect,
+			&p.TLSCACert, &p.TLSCAPath, &p.TLSInsecure, &p.TLSPinnedHash,
+			&p.CreatedAt, &last); err != nil {
 			return nil, err
 		}
 		if last.Valid {
@@ -85,11 +94,13 @@ func (s *Store) UpdateProfile(p *model.ServerProfile) error {
 		`UPDATE server_profiles SET
 		    name = ?, protocol = ?, host = ?, server_ips = ?, port = ?, path = ?,
 		    username = ?, auth_mode = ?, routing_mode = ?,
-		    custom_cidrs = ?, mtu_override = ?, auto_connect = ?
+		    custom_cidrs = ?, mtu_override = ?, auto_connect = ?,
+		    tls_ca_cert = ?, tls_ca_path = ?, tls_insecure = ?, tls_pinned_hash = ?
 		 WHERE id = ?`,
 		p.Name, p.Protocol, p.Host, p.ServerIPs, p.Port, p.Path,
 		p.Username, p.AuthMode, p.RoutingMode,
-		p.CustomCIDRs, p.MTUOverride, p.AutoConnect, p.ID)
+		p.CustomCIDRs, p.MTUOverride, p.AutoConnect,
+		p.TLSCACert, p.TLSCAPath, p.TLSInsecure, p.TLSPinnedHash, p.ID)
 	if err != nil {
 		return fmt.Errorf("update profile %d: %w", p.ID, err)
 	}

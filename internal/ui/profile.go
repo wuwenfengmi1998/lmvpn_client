@@ -108,6 +108,52 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 	mtuEntry.Scroll = container.ScrollNone
 	mtuEntry.SetPlaceHolder(i18n.T("PlaceholderMTU"))
 
+	tlsCaPEMEntry := widget.NewMultiLineEntry()
+	tlsCaPEMEntry.Wrapping = fyne.TextWrapOff
+	tlsCaPEMEntry.Scroll = container.ScrollNone
+	tlsCaPEMEntry.SetMinRowsVisible(4)
+	tlsCaPEMEntry.SetPlaceHolder(i18n.T("PlaceholderTLSCACert"))
+
+	tlsCaPathEntry := widget.NewEntry()
+	tlsCaPathEntry.Wrapping = fyne.TextWrapOff
+	tlsCaPathEntry.Scroll = container.ScrollNone
+	tlsCaPathEntry.SetPlaceHolder(i18n.T("PlaceholderTLSCAPath"))
+
+	tlsInsecureCheck := widget.NewCheck(i18n.T("FieldTLSInsecure"), nil)
+
+	tlsPinnedHashEntry := widget.NewEntry()
+	tlsPinnedHashEntry.Wrapping = fyne.TextWrapOff
+	tlsPinnedHashEntry.Scroll = container.ScrollNone
+	tlsPinnedHashEntry.SetPlaceHolder(i18n.T("PlaceholderTLSPinnedHash"))
+
+	var profileWin fyne.Window
+
+	browseBtn := widget.NewButton(i18n.T("BtnBrowse"), func() {
+		dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+			if err != nil || reader == nil {
+				return
+			}
+			defer reader.Close()
+			tlsCaPathEntry.SetText(reader.URI().Path())
+		}, profileWin).Show()
+	})
+
+	setTLSEnabled := func(enabled bool) {
+		if enabled {
+			tlsCaPEMEntry.Enable()
+			tlsCaPathEntry.Enable()
+			browseBtn.Enable()
+			tlsInsecureCheck.Enable()
+			tlsPinnedHashEntry.Enable()
+		} else {
+			tlsCaPEMEntry.Disable()
+			tlsCaPathEntry.Disable()
+			browseBtn.Disable()
+			tlsInsecureCheck.Disable()
+			tlsPinnedHashEntry.Disable()
+		}
+	}
+
 	if !isNew {
 		nameEntry.SetText(editing.Name)
 		protoSelect.SetSelectedIndex(codeIndex(protoCodes, editing.Protocol))
@@ -122,6 +168,10 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 		routeSelect.SetSelectedIndex(codeIndex(routeCodes, string(editing.RoutingMode)))
 		cidrEntry.SetText(editing.CustomCIDRs)
 		mtuEntry.SetText(fmtInt(editing.MTUOverride))
+		tlsCaPEMEntry.SetText(editing.TLSCACert)
+		tlsCaPathEntry.SetText(editing.TLSCAPath)
+		tlsInsecureCheck.SetChecked(editing.TLSInsecure)
+		tlsPinnedHashEntry.SetText(editing.TLSPinnedHash)
 		passEntry.SetPlaceHolder(i18n.T("PlaceholderPasswordUnchanged"))
 	} else {
 		protoSelect.SetSelectedIndex(0) // wss
@@ -131,6 +181,11 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 		routeSelect.SetSelectedIndex(codeIndex(routeCodes, string(model.RoutingFull)))
 		mtuEntry.SetText("0")
 	}
+
+	protoSelect.OnChanged = func(value string) {
+		setTLSEnabled(value == "wss")
+	}
+	setTLSEnabled(selectedCode(protoCodes, protoSelect.SelectedIndex()) == "wss")
 
 	form := container.NewVBox(
 		widget.NewLabel(i18n.T("FieldName")),
@@ -159,9 +214,19 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 
 		widget.NewLabel(i18n.T("FieldCustomCIDRs")), cidrEntry,
 		widget.NewLabel(i18n.T("FieldMTUOverride")), mtuEntry,
+
+		widget.NewLabel(i18n.T("FieldTLS")),
+		widget.NewLabel(i18n.T("FieldTLSCAPath")),
+		container.NewBorder(nil, nil, nil, browseBtn, tlsCaPathEntry),
+		widget.NewLabel(i18n.T("FieldTLSCACert")),
+		tlsCaPEMEntry,
+		widget.NewLabel(i18n.T("HintTLSCAReplacesSystem")),
+		tlsInsecureCheck,
+		widget.NewLabel(i18n.T("FieldTLSPinnedHash")),
+		tlsPinnedHashEntry,
 	)
 
-	profileWin := a.fyneApp.NewWindow(i18n.T("DlgProfileTitle"))
+	profileWin = a.fyneApp.NewWindow(i18n.T("DlgProfileTitle"))
 	a.profileWindow = profileWin
 
 	profileWin.SetOnClosed(func() {
@@ -177,7 +242,10 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 			userEntry.Text, passEntry.Text,
 			selectedCode(authCodes, authSelect.SelectedIndex()),
 			selectedCode(routeCodes, routeSelect.SelectedIndex()),
-			cidrEntry.Text, mtuEntry.Text, isNew) {
+			cidrEntry.Text, mtuEntry.Text,
+			tlsCaPEMEntry.Text, tlsCaPathEntry.Text,
+			tlsPinnedHashEntry.Text, tlsInsecureCheck.Checked,
+			isNew) {
 			profileWin.Close()
 		}
 	})
@@ -188,14 +256,15 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 	})
 
 	profileWin.SetContent(container.NewBorder(nil, container.NewHBox(saveBtn, cancelBtn), nil, nil, container.NewVScroll(form)))
-	profileWin.Resize(fyne.NewSize(460, 560))
+	profileWin.Resize(fyne.NewSize(460, 760))
 	profileWin.Show()
 }
 
 // saveProfile creates or updates a profile and stores credentials.
 // Returns true on success, false if validation or DB operation failed.
 func (a *App) saveProfile(editing *model.ServerProfile,
-	name, protocol, host, ips, portStr, pathStr, user, password, authMode, routeMode, cidrs, mtuStr string, isNew bool) bool {
+	name, protocol, host, ips, portStr, pathStr, user, password, authMode, routeMode, cidrs, mtuStr,
+	tlsCaPEM, tlsCaPath, tlsPinnedHash string, tlsInsecure, isNew bool) bool {
 	if name == "" || host == "" || user == "" {
 		showError(i18n.T("DlgValidationTitle"), i18n.T("DlgValidationMsg"), a.window)
 		return false
@@ -206,17 +275,21 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 
 	if isNew {
 		p := &model.ServerProfile{
-			Name:        name,
-			Protocol:    protocol,
-			Host:        host,
-			ServerIPs:   ips,
-			Port:        port,
-			Path:        pathStr,
-			Username:    user,
-			AuthMode:    model.AuthMode(authMode),
-			RoutingMode: model.RoutingMode(routeMode),
-			CustomCIDRs: cidrs,
-			MTUOverride: mtu,
+			Name:          name,
+			Protocol:      protocol,
+			Host:          host,
+			ServerIPs:     ips,
+			Port:          port,
+			Path:          pathStr,
+			Username:      user,
+			AuthMode:      model.AuthMode(authMode),
+			RoutingMode:   model.RoutingMode(routeMode),
+			CustomCIDRs:   cidrs,
+			MTUOverride:   mtu,
+			TLSCACert:     tlsCaPEM,
+			TLSCAPath:     tlsCaPath,
+			TLSInsecure:   tlsInsecure,
+			TLSPinnedHash: tlsPinnedHash,
 		}
 		id, err := a.db.CreateProfile(p)
 		if err != nil {
@@ -242,6 +315,10 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 		editing.RoutingMode = model.RoutingMode(routeMode)
 		editing.CustomCIDRs = cidrs
 		editing.MTUOverride = mtu
+		editing.TLSCACert = tlsCaPEM
+		editing.TLSCAPath = tlsCaPath
+		editing.TLSInsecure = tlsInsecure
+		editing.TLSPinnedHash = tlsPinnedHash
 		if err := a.db.UpdateProfile(editing); err != nil {
 			showError(i18n.T("DlgSaveError"), err.Error(), a.window)
 			return false

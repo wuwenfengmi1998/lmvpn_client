@@ -6,6 +6,7 @@ package auth
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,7 +42,12 @@ type errorResponse struct {
 // baseURL should be the HTTP(S) origin derived from the WebSocket URL
 // (e.g. "http://localhost:8080" for ws://, "https://vpn.example.com"
 // for wss://). See WSURLToHTTP.
-func Login(baseURL, username, password string) (*LoginResult, error) {
+//
+// tlsCfg, if non-nil, is used as the TLS configuration for the HTTP
+// client. This is essential when connecting via CDN edge IPs: the URL
+// host will be an IP address, but the certificate must be verified
+// against the real hostname (set tlsCfg.ServerName).
+func Login(baseURL, username, password string, tlsCfg *tls.Config) (*LoginResult, error) {
 	body, err := json.Marshal(loginRequest{Username: username, Password: password})
 	if err != nil {
 		return nil, err
@@ -49,6 +55,9 @@ func Login(baseURL, username, password string) (*LoginResult, error) {
 
 	url := strings.TrimRight(baseURL, "/") + "/api/login"
 	client := &http.Client{Timeout: 15 * time.Second}
+	if tlsCfg != nil {
+		client.Transport = &http.Transport{TLSClientConfig: tlsCfg}
+	}
 	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("login request: %w", err)

@@ -49,16 +49,20 @@ type Request struct {
 // vpn.SessionConfig but is kept separate to avoid importing the vpn
 // package (which needs root-only TUN) into the GUI.
 type ClientConfig struct {
-	ServerURL   string   `json:"server_url"`
-	SNIHost     string   `json:"sni_host"`   // TLS SNI hostname for CDN
-	ServerIPs   []string `json:"server_ips"` // CDN edge IP list for failover
-	Username    string   `json:"username"`
-	Password    string   `json:"password"`
-	Token       string   `json:"token"`
-	AuthMode    string   `json:"auth_mode"`
-	RoutingMode string   `json:"routing_mode"`
-	CustomCIDRs []string `json:"custom_cidrs"`
-	MTUOverride int      `json:"mtu_override"`
+	ServerURL     string   `json:"server_url"`
+	SNIHost       string   `json:"sni_host"`        // TLS SNI hostname for CDN
+	ServerIPs     []string `json:"server_ips"`      // CDN edge IP list for failover
+	Username      string   `json:"username"`
+	Password      string   `json:"password"`
+	Token         string   `json:"token"`
+	AuthMode      string   `json:"auth_mode"`
+	RoutingMode   string   `json:"routing_mode"`
+	CustomCIDRs   []string `json:"custom_cidrs"`
+	MTUOverride   int      `json:"mtu_override"`
+	TLSCACert     string   `json:"tls_ca_cert"`     // inline CA cert PEM (wss only)
+	TLSCAPath     string   `json:"tls_ca_path"`     // CA cert file path (wss only)
+	TLSInsecure   bool     `json:"tls_insecure"`    // skip cert verification (wss only)
+	TLSPinnedHash string   `json:"tls_pinned_hash"` // SHA-256 cert pin (wss only)
 }
 
 // Event is a notification from the daemon to the GUI.

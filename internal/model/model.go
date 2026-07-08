@@ -41,6 +41,10 @@ type ServerProfile struct {
 	CustomCIDRs     string      `json:"custom_cidrs"` // comma-separated, for RoutingCustom
 	MTUOverride     int         `json:"mtu_override"` // 0 = use server MTU
 	AutoConnect     bool        `json:"auto_connect"`
+	TLSCACert       string      `json:"tls_ca_cert"`      // inline CA certificate PEM (wss only)
+	TLSCAPath       string      `json:"tls_ca_path"`      // path to CA certificate file (wss only)
+	TLSInsecure     bool        `json:"tls_insecure"`     // skip certificate verification (wss only)
+	TLSPinnedHash   string      `json:"tls_pinned_hash"`  // SHA-256 fingerprint of server leaf cert (wss only)
 	CreatedAt       time.Time   `json:"created_at"`
 	LastConnectedAt *time.Time  `json:"last_connected_at"`
 }

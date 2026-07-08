@@ -36,6 +36,7 @@ type HandshakeConfig struct {
 	Username  string                           // for password auth (method B), or fallback
 	Password  string                           // for password auth (method B), or fallback
 	OnInit    func(protocol.InitMessage) error // configure TUN; nil = auto-ready
+	TLSConfig *tls.Config                      // pre-built TLS config (nil = derive from SNIHost)
 }
 
 // Conn is an established VPN tunnel connection.
@@ -57,7 +58,9 @@ func Connect(ctx context.Context, cfg HandshakeConfig) (*Conn, error) {
 		WriteBufferSize:  4096, // match server (handler.go:18)
 	}
 
-	if cfg.SNIHost != "" {
+	if cfg.TLSConfig != nil {
+		dialer.TLSClientConfig = cfg.TLSConfig
+	} else if cfg.SNIHost != "" {
 		dialer.TLSClientConfig = &tls.Config{
 			ServerName: cfg.SNIHost,
 		}

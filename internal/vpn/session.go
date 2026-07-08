@@ -9,10 +9,12 @@ package vpn
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +24,7 @@ import (
 	"lmvpn/internal/protocol"
 	"lmvpn/internal/route"
 	"lmvpn/internal/stats"
+	"lmvpn/internal/tlsconfig"
 	"lmvpn/internal/transport"
 	"lmvpn/internal/tun"
 )
@@ -38,6 +41,10 @@ type SessionConfig struct {
 	RoutingMode route.Mode
 	CustomCIDRs []string
 	MTUOverride int // 0 = use server MTU
+	TLSCACert     string // inline CA cert PEM (wss only)
+	TLSCAPath     string // CA cert file path (wss only)
+	TLSInsecure   bool   // skip cert verification (wss only)
+	TLSPinnedHash string // SHA-256 cert pin (wss only)
 }
 
 // SessionManager manages a single VPN session with auto-reconnect.
@@ -164,6 +171,20 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 		if err != nil {
 			log.L().Error("VPN connection failed", "error", err)
 
+			// A TLS certificate verification failure is not retryable:
+			// the cert won't change between attempts, so stop the
+			// loop and surface the reason to the user.
+			if tlsconfig.IsTLSError(err) {
+				log.L().Warn("fatal TLS error, stopping reconnect", "error", err)
+				sm.setState(stats.StateError)
+				if sm.onError != nil {
+					sm.onError("tls_error", err.Error())
+				}
+				fatal = true
+				sm.cleanup()
+				return
+			}
+
 			// A fatal authentication failure (wrong password, disabled
 			// account, expired token, rate limit) is not retryable:
 			// stop the loop and surface the reason to the user instead
@@ -254,6 +275,28 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 		serverURL = replaceHost(cfg.ServerURL, targetIP)
 	}
 
+	// Build TLS config for wss:// connections. For ws:// there is no
+	// TLS layer, so tlsCfg remains nil and both the HTTP client and
+	// the WebSocket dialer use their default (plaintext) behaviour.
+	var tlsCfg *tls.Config
+	if strings.HasPrefix(serverURL, "wss://") {
+		serverName := cfg.SNIHost
+		if serverName == "" {
+			serverName = serverHostFromURL(cfg.ServerURL)
+		}
+		var err error
+		tlsCfg, err = tlsconfig.Build(tlsconfig.Config{
+			ServerName:         serverName,
+			CACertPEM:          cfg.TLSCACert,
+			CACertPath:         cfg.TLSCAPath,
+			InsecureSkipVerify: cfg.TLSInsecure,
+			PinnedCertHash:     cfg.TLSPinnedHash,
+		})
+		if err != nil {
+			return fmt.Errorf("tls config: %w", err)
+		}
+	}
+
 	// Determine auth strategy and obtain JWT if needed.
 	token := cfg.Token
 	if token == "" && (cfg.AuthMode == model.AuthModeJWT || cfg.AuthMode == model.AuthModeBoth) {
@@ -261,7 +304,7 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 		if err != nil {
 			return fmt.Errorf("parse server URL: %w", err)
 		}
-		result, err := auth.Login(httpBase, cfg.Username, cfg.Password)
+		result, err := auth.Login(httpBase, cfg.Username, cfg.Password, tlsCfg)
 		if err != nil {
 			if cfg.AuthMode == model.AuthModeBoth {
 				// Fall back to password auth.
@@ -285,6 +328,7 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 		OnInit: func(init protocol.InitMessage) error {
 			return sm.setupTUN(init, cfg)
 		},
+		TLSConfig: tlsCfg,
 	}
 
 	// Attempt JWT connection first; fall back to password on auth error.

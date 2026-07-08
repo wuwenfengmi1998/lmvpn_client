@@ -131,16 +131,20 @@ func (d *daemon) startSession(conn net.Conn, req ipc.Request) {
 	}
 
 	cfg := vpn.SessionConfig{
-		ServerURL:   req.Config.ServerURL,
-		SNIHost:     req.Config.SNIHost,
-		ServerIPs:   req.Config.ServerIPs,
-		Username:    req.Config.Username,
-		Password:    req.Config.Password,
-		Token:       req.Config.Token,
-		AuthMode:    model.AuthMode(req.Config.AuthMode),
-		RoutingMode: ipc.RoutingModeFromIPC(req.Config.RoutingMode),
-		CustomCIDRs: req.Config.CustomCIDRs,
-		MTUOverride: req.Config.MTUOverride,
+		ServerURL:     req.Config.ServerURL,
+		SNIHost:       req.Config.SNIHost,
+		ServerIPs:     req.Config.ServerIPs,
+		Username:      req.Config.Username,
+		Password:      req.Config.Password,
+		Token:         req.Config.Token,
+		AuthMode:      model.AuthMode(req.Config.AuthMode),
+		RoutingMode:   ipc.RoutingModeFromIPC(req.Config.RoutingMode),
+		CustomCIDRs:   req.Config.CustomCIDRs,
+		MTUOverride:   req.Config.MTUOverride,
+		TLSCACert:     req.Config.TLSCACert,
+		TLSCAPath:     req.Config.TLSCAPath,
+		TLSInsecure:   req.Config.TLSInsecure,
+		TLSPinnedHash: req.Config.TLSPinnedHash,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

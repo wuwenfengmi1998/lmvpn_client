@@ -48,7 +48,10 @@ func (s *Store) migrate() error {
 	if err := s.migrateV2(); err != nil {
 		return err
 	}
-	return s.migrateV3()
+	if err := s.migrateV3(); err != nil {
+		return err
+	}
+	return s.migrateV4()
 }
 
 func (s *Store) migrateV2() error {
@@ -177,6 +180,29 @@ func (s *Store) migrateV3() error {
 	_, err := s.db.Exec(`ALTER TABLE connection_logs ADD COLUMN assigned_ip6 TEXT NOT NULL DEFAULT ''`)
 	if err != nil {
 		return fmt.Errorf("migrate v3 add assigned_ip6: %w", err)
+	}
+	return nil
+}
+
+// migrateV4 adds TLS certificate verification columns to
+// server_profiles for custom CA, insecure mode, and cert pinning.
+// Idempotent: skips columns that already exist.
+func (s *Store) migrateV4() error {
+	cols := []struct {
+		name string
+		sql  string
+	}{
+		{"tls_ca_cert", "ALTER TABLE server_profiles ADD COLUMN tls_ca_cert TEXT NOT NULL DEFAULT ''"},
+		{"tls_ca_path", "ALTER TABLE server_profiles ADD COLUMN tls_ca_path TEXT NOT NULL DEFAULT ''"},
+		{"tls_insecure", "ALTER TABLE server_profiles ADD COLUMN tls_insecure INTEGER NOT NULL DEFAULT 0"},
+		{"tls_pinned_hash", "ALTER TABLE server_profiles ADD COLUMN tls_pinned_hash TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, c := range cols {
+		if !columnExists(s.db, "server_profiles", c.name) {
+			if _, err := s.db.Exec(c.sql); err != nil {
+				return fmt.Errorf("migrate v4 add %s: %w", c.name, err)
+			}
+		}
 	}
 	return nil
 }

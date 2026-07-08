@@ -158,15 +158,19 @@ func (a *App) onConnect() {
 
 		// Build and send the start command.
 		cfg := ipc.ClientConfig{
-			ServerURL:   serverURL,
-			SNIHost:     sniHost,
-			ServerIPs:   serverIPs,
-			Username:    p.Username,
-			Password:    password,
-			AuthMode:    string(p.AuthMode),
-			RoutingMode: string(p.RoutingMode),
-			CustomCIDRs: splitCIDRs(p.CustomCIDRs),
-			MTUOverride: p.MTUOverride,
+			ServerURL:     serverURL,
+			SNIHost:       sniHost,
+			ServerIPs:     serverIPs,
+			Username:      p.Username,
+			Password:      password,
+			AuthMode:      string(p.AuthMode),
+			RoutingMode:   string(p.RoutingMode),
+			CustomCIDRs:   splitCIDRs(p.CustomCIDRs),
+			MTUOverride:   p.MTUOverride,
+			TLSCACert:     p.TLSCACert,
+			TLSCAPath:     p.TLSCAPath,
+			TLSInsecure:   p.TLSInsecure,
+			TLSPinnedHash: p.TLSPinnedHash,
 		}
 		if err := ipc.SendStart(client, cfg); err != nil {
 			fyne.Do(func() {
@@ -241,9 +245,14 @@ func (a *App) eventLoop() {
 			}
 		case ipc.EvError:
 			fyne.Do(func() {
-				msg := authErrorMessage(ev.Code, ev.Message)
-				if msg != "" {
-					showError(i18n.T("DlgAuthError"), msg, a.window)
+				if ev.Code == "tls_error" {
+					showError(i18n.T("DlgTLSError"),
+						i18n.T("TLSErrorVerification")+"\n\n"+ev.Message, a.window)
+				} else {
+					msg := authErrorMessage(ev.Code, ev.Message)
+					if msg != "" {
+						showError(i18n.T("DlgAuthError"), msg, a.window)
+					}
 				}
 			})
 		}
