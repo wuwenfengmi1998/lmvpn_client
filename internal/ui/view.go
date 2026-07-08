@@ -54,6 +54,7 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 	// Profile selector.
 	a.profileSelect = widget.NewSelect(a.profileNames(), func(sel string) {
 		a.selectProfileByName(sel)
+		a.saveDefaultProfile()
 	})
 
 	// Status display.

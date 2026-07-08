@@ -48,11 +48,12 @@ type App struct {
 	disconnectBtn *widget.Button
 
 	// State
-	mu             sync.Mutex
-	ipcClient      *ipc.Client
-	profiles       []model.ServerProfile
-	currentProfile *model.ServerProfile
-	langSetting    string
+	mu              sync.Mutex
+	ipcClient       *ipc.Client
+	profiles        []model.ServerProfile
+	currentProfile  *model.ServerProfile
+	defaultProfileID int64
+	langSetting     string
 }
 
 // Run initialises and starts the GUI application.
@@ -84,6 +85,7 @@ func Run() {
 		db:                store,
 		kc:                keychain.New(),
 		langSetting:       cfg.Language,
+		defaultProfileID:  cfg.DefaultProfileID,
 		listSelectedIndex: -1,
 	}
 
@@ -144,8 +146,21 @@ func (a *App) loadProfiles() {
 	names := a.profileNames()
 	a.profileSelect.Options = names
 	if len(names) > 0 {
-		a.profileSelect.SetSelectedIndex(0)
-		a.selectProfileByName(names[0])
+		selected := false
+		if a.defaultProfileID > 0 {
+			for i := range a.profiles {
+				if a.profiles[i].ID == a.defaultProfileID {
+					a.profileSelect.SetSelectedIndex(i)
+					a.selectProfileByName(a.profiles[i].Name)
+					selected = true
+					break
+				}
+			}
+		}
+		if !selected {
+			a.profileSelect.SetSelectedIndex(0)
+			a.selectProfileByName(names[0])
+		}
 	} else {
 		a.currentProfile = nil
 		a.profileSelect.SetSelected("")
@@ -179,6 +194,26 @@ func (a *App) selectProfileByName(name string) {
 			a.currentProfile = &a.profiles[i]
 			return
 		}
+	}
+}
+
+// saveDefaultProfile persists the currently selected profile ID to the
+// config file so it can be restored on the next launch.
+func (a *App) saveDefaultProfile() {
+	if a.currentProfile == nil {
+		return
+	}
+	a.defaultProfileID = a.currentProfile.ID
+	cfg, err := config.Load()
+	if err != nil {
+		cfg = config.Default()
+	}
+	if cfg.DefaultProfileID == a.currentProfile.ID {
+		return
+	}
+	cfg.DefaultProfileID = a.currentProfile.ID
+	if err := config.Save(cfg); err != nil {
+		log.L().Error("save default profile", "error", err)
 	}
 }
 
