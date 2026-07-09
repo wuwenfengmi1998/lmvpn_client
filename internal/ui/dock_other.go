@@ -2,6 +2,8 @@
 
 package ui
 
+var onAppActive func()
+
 func showDockIcon() {}
 func hideDockIcon() {}
 
