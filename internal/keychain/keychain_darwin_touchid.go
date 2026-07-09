@@ -215,6 +215,11 @@ import (
 // when the user cancels a Touch ID / password prompt (-128).
 const errSecUserCanceled = -128
 
+// errSecMissingEntitlementCode is errSecMissingEntitlement (-34018),
+// returned by the Data Protection Keychain when the app is not properly
+// code-signed with keychain-access-groups entitlement.
+const errSecMissingEntitlementCode = -34018
+
 var (
 	biometricCacheOnce sync.Once
 	biometricCacheVal  bool
@@ -293,6 +298,9 @@ func storeBiometricItemGo(service, account, secret string) error {
 
 	status := C.storeBiometricItem(svcRef, accRef, dataRef)
 	if status != 0 {
+		if status == errSecMissingEntitlementCode {
+			return fmt.Errorf("keychain biometric store %s: %w", account, ErrSecMissingEntitlement)
+		}
 		return fmt.Errorf("keychain biometric store %s: OSStatus %d", account, status)
 	}
 	return nil
@@ -329,6 +337,9 @@ func getBiometricItemGo(service, account, prompt string) (string, error) {
 		return "", ErrUserCanceled
 	}
 	if status != 0 {
+		if status == errSecMissingEntitlementCode {
+			return "", fmt.Errorf("keychain biometric get %s: %w", account, ErrSecMissingEntitlement)
+		}
 		return "", fmt.Errorf("keychain biometric get %s: OSStatus %d", account, status)
 	}
 	defer cfRelease(C.CFTypeRef(dataOut))
@@ -354,6 +365,9 @@ func deleteBiometricItemGo(service, account string) error {
 
 	status := C.deleteBiometricItem(svcRef, accRef)
 	if status != 0 {
+		if status == errSecMissingEntitlementCode {
+			return fmt.Errorf("keychain biometric delete %s: %w", account, ErrSecMissingEntitlement)
+		}
 		return fmt.Errorf("keychain biometric delete %s: OSStatus %d", account, status)
 	}
 	return nil

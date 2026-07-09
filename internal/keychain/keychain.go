@@ -19,6 +19,12 @@ const ServiceName = paths.BundleID
 // ErrNotFound is returned when a secret is not present in the store.
 var ErrNotFound = fmt.Errorf("secret not found")
 
+// ErrSecMissingEntitlement is returned when the biometric keychain path
+// fails because the app lacks the required code-signing entitlements
+// (errSecMissingEntitlement, OSStatus -34018). Callers should fall back
+// to the non-biometric keychain path when this error is encountered.
+var ErrSecMissingEntitlement = fmt.Errorf("missing keychain entitlement")
+
 // ErrUserCanceled is returned when the user cancels a biometric
 // authentication prompt (e.g. Touch ID) or the system cannot complete
 // authentication.

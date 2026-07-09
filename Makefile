@@ -11,12 +11,18 @@ GO          = go
 CGO_ENABLED = 1
 WINDRES     ?= x86_64-w64-mingw32-windres
 MINGW_CC    ?= x86_64-w64-mingw32-gcc
-SEMVER      ?= 0.6.6
+SEMVER      ?= 0.6.7
 GIT_HASH    = $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 VERSION     = $(SEMVER)-$(GIT_HASH)
 LDFLAGS     = -s -w -X lmvpn/internal/version.Version=$(VERSION)
 
-.PHONY: all build app run daemon clean vet tidy fmt icon icon-windows build-windows installer-windows
+# Code signing (optional). Set these to sign the .app bundle with a
+# Developer ID certificate, enabling biometric (Touch ID) keychain access.
+# Example: make app CODESIGN_IDENTITY="Developer ID Application: Name (ABCDE12345)" TEAM_ID=ABCDE12345
+CODESIGN_IDENTITY ?=
+TEAM_ID          ?=
+
+.PHONY: all build app run daemon clean vet tidy fmt icon icon-windows build-windows installer-windows sign
 
 ## all: build the .app bundle (default)
 all: app
@@ -41,7 +47,38 @@ app: build
 	@if [ -f resources/icon.icns ]; then \
 		cp resources/icon.icns $(APP_BUNDLE)/Contents/Resources/icon.icns; \
 	else echo "  (no icon.icns found, skipping icon)"; fi
+	@if [ -n "$(CODESIGN_IDENTITY)" ]; then $(MAKE) sign; \
+	else echo "  (skipping code signing - set CODESIGN_IDENTITY and TEAM_ID to enable Touch ID keychain)"; fi
 	@echo "Built $(APP_BUNDLE)"
+
+## sign: code-sign the .app bundle with a Developer ID certificate
+## Requires CODESIGN_IDENTITY and TEAM_ID to be set.
+sign:
+	@if [ -z "$(CODESIGN_IDENTITY)" ]; then \
+		echo "ERROR: CODESIGN_IDENTITY not set."; \
+		echo "Usage: make sign CODESIGN_IDENTITY='Developer ID Application: Name (TEAMID)' TEAM_ID=TEAMID"; \
+		exit 1; \
+	fi
+	@if [ -z "$(TEAM_ID)" ]; then \
+		echo "ERROR: TEAM_ID not set."; \
+		exit 1; \
+	fi
+	@tmp=$$(mktemp LMVPN.entitlements.XXXXXX); \
+	sed 's/\$$(AppIdentifierPrefix)/$(TEAM_ID)./' resources/LMVPN.entitlements > $$tmp; \
+	codesign --force --options runtime \
+		--sign "$(CODESIGN_IDENTITY)" \
+		--entitlements $$tmp \
+		$(APP_BUNDLE)/Contents/MacOS/$(GUI_BIN); \
+	codesign --force --options runtime \
+		--sign "$(CODESIGN_IDENTITY)" \
+		--entitlements $$tmp \
+		$(APP_BUNDLE)/Contents/MacOS/$(DAEMON_BIN); \
+	codesign --force --options runtime \
+		--sign "$(CODESIGN_IDENTITY)" \
+		--entitlements $$tmp \
+		$(APP_BUNDLE); \
+	rm -f $$tmp
+	@echo "Signed $(APP_BUNDLE) with identity: $(CODESIGN_IDENTITY)"
 
 ## icon: generate icon.icns from resources/icon.png (or resources/logo.svg)
 icon:

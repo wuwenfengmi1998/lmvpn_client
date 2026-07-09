@@ -3,7 +3,9 @@
 package keychain
 
 import (
+	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/keybase/go-keychain"
 )
@@ -26,6 +28,36 @@ func SetTouchIDPrompt(prompt string) {
 	}
 }
 
+// biometricDisabled tracks whether the biometric keychain path has been
+// disabled at runtime. This happens when a biometric operation fails with
+// errSecMissingEntitlement (-34018), indicating the app lacks the required
+// code-signing entitlements. Once disabled, all subsequent operations use
+// the non-biometric file-based keychain path.
+var (
+	biometricDisabled   bool
+	biometricDisabledMu sync.Mutex
+)
+
+// shouldUseBiometric reports whether the biometric keychain path should be
+// used. It returns false if biometric storage has been disabled at runtime
+// (e.g. due to missing entitlements on an ad-hoc signed build).
+func shouldUseBiometric() bool {
+	if !biometricAvailable() {
+		return false
+	}
+	biometricDisabledMu.Lock()
+	defer biometricDisabledMu.Unlock()
+	return !biometricDisabled
+}
+
+// disableBiometric disables the biometric keychain path for all subsequent
+// operations, forcing a fallback to the non-biometric file-based keychain.
+func disableBiometric() {
+	biometricDisabledMu.Lock()
+	defer biometricDisabledMu.Unlock()
+	biometricDisabled = true
+}
+
 // DarwinStore implements Store using the macOS Keychain.
 type DarwinStore struct{}
 
@@ -37,18 +69,15 @@ func New() Store {
 	return DarwinStore{}
 }
 
-func (DarwinStore) setItem(account, secret string) error {
-	// Use biometric-protected storage when Touch ID is available.
-	if biometricAvailable() {
-		return storeBiometricItemGo(ServiceName, account, secret)
-	}
+// setItemPlain stores a secret in the file-based keychain (no biometric
+// protection) using the keybase/go-keychain library.
+func setItemPlain(account, secret string) error {
 	item := keychain.NewItem()
 	item.SetSecClass(keychain.SecClassGenericPassword)
 	item.SetService(ServiceName)
 	item.SetAccount(account)
 	item.SetData([]byte(secret))
 	item.SetAccessible(keychain.AccessibleAfterFirstUnlock)
-	// Delete any existing item first (Add fails on duplicates).
 	_ = keychain.DeleteItem(item)
 	if err := keychain.AddItem(item); err != nil {
 		return fmt.Errorf("keychain add %s: %w", account, err)
@@ -56,12 +85,8 @@ func (DarwinStore) setItem(account, secret string) error {
 	return nil
 }
 
-func (DarwinStore) getItem(account string) (string, error) {
-	// When Touch ID is available, use the direct CGo path which can
-	// show a biometric prompt for protected items.
-	if biometricAvailable() {
-		return getBiometricItemGo(ServiceName, account, touchIDPrompt)
-	}
+// getItemPlain retrieves a secret from the file-based keychain.
+func getItemPlain(account string) (string, error) {
 	item := keychain.NewItem()
 	item.SetSecClass(keychain.SecClassGenericPassword)
 	item.SetService(ServiceName)
@@ -78,17 +103,64 @@ func (DarwinStore) getItem(account string) (string, error) {
 	return string(results[0].Data), nil
 }
 
-func (DarwinStore) deleteItem(account string) error {
-	// Use the direct CGo delete which works for both biometric and
-	// non-biometric items (and doesn't trigger a Touch ID prompt).
-	if biometricAvailable() {
-		return deleteBiometricItemGo(ServiceName, account)
-	}
+// deleteItemPlain deletes a secret from the file-based keychain.
+func deleteItemPlain(account string) error {
 	item := keychain.NewItem()
 	item.SetSecClass(keychain.SecClassGenericPassword)
 	item.SetService(ServiceName)
 	item.SetAccount(account)
 	return keychain.DeleteItem(item)
+}
+
+func (DarwinStore) setItem(account, secret string) error {
+	if shouldUseBiometric() {
+		err := storeBiometricItemGo(ServiceName, account, secret)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, ErrSecMissingEntitlement) {
+			disableBiometric()
+			// Fall through to non-biometric path.
+		} else {
+			return err
+		}
+	}
+	return setItemPlain(account, secret)
+}
+
+func (DarwinStore) getItem(account string) (string, error) {
+	if shouldUseBiometric() {
+		secret, err := getBiometricItemGo(ServiceName, account, touchIDPrompt)
+		if err == nil {
+			return secret, nil
+		}
+		if errors.Is(err, ErrSecMissingEntitlement) {
+			disableBiometric()
+			// Fall through to non-biometric path.
+		} else if errors.Is(err, ErrNotFound) {
+			// Item not in the Data Protection Keychain; it may have
+			// been stored via the non-biometric path. Fall through.
+		} else {
+			return "", err
+		}
+	}
+	return getItemPlain(account)
+}
+
+func (DarwinStore) deleteItem(account string) error {
+	if shouldUseBiometric() {
+		err := deleteBiometricItemGo(ServiceName, account)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, ErrSecMissingEntitlement) {
+			disableBiometric()
+			// Fall through to non-biometric path.
+		} else {
+			return err
+		}
+	}
+	return deleteItemPlain(account)
 }
 
 func (s DarwinStore) SetPassword(profileName, password string) error {
