@@ -25,6 +25,8 @@ var (
 	protoCodes = []string{"wss", "ws"}
 
 	fetchTimingCodes = []string{string(model.FetchBefore), string(model.FetchAfter)}
+
+	ipPrefCodes = []string{string(model.IPPrefAuto), string(model.IPPrefV4), string(model.IPPrefV6)}
 )
 
 func authModeLabels() []string {
@@ -41,6 +43,10 @@ func protoLabels() []string {
 
 func fetchTimingLabels() []string {
 	return []string{i18n.T("FetchTimingBefore"), i18n.T("FetchTimingAfter")}
+}
+
+func ipPrefLabels() []string {
+	return []string{i18n.T("IPPrefAuto"), i18n.T("IPPrefV4"), i18n.T("IPPrefV6")}
 }
 
 // codeIndex returns the position of code in codes, or 0 if not found.
@@ -63,14 +69,14 @@ func selectedCode(codes []string, idx int) string {
 
 // urlEntryRow holds the widgets for a single CIDR URL source row.
 type urlEntryRow struct {
-	urlEntry    *widget.Entry
+	urlEntry     *widget.Entry
 	timingSelect *widget.Select
-	container   *fyne.Container
+	container    *fyne.Container
 }
 
 // cidrURLList manages a dynamic list of CIDR URL source rows.
 type cidrURLList struct {
-	rows   []*urlEntryRow
+	rows      []*urlEntryRow
 	container *fyne.Container
 	parent    fyne.Window
 }
@@ -198,6 +204,7 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 
 	authSelect := widget.NewSelect(authModeLabels(), nil)
 	routeSelect := widget.NewSelect(routeModeLabels(), nil)
+	ipPrefSelect := widget.NewSelect(ipPrefLabels(), nil)
 
 	cidrV4Entry := widget.NewMultiLineEntry()
 	cidrV4Entry.Wrapping = fyne.TextWrapOff
@@ -300,6 +307,7 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 		userEntry.SetText(editing.Username)
 		authSelect.SetSelectedIndex(codeIndex(authCodes, string(editing.AuthMode)))
 		routeSelect.SetSelectedIndex(codeIndex(routeCodes, string(editing.RoutingMode)))
+		ipPrefSelect.SetSelectedIndex(codeIndex(ipPrefCodes, editing.IPPreference))
 		cidrV4Entry.SetText(editing.CIDRV4)
 		cidrV6Entry.SetText(editing.CIDRV6)
 		v4URLList.loadFromJSON(editing.CIDRV4URLs)
@@ -316,6 +324,7 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 		pathEntry.SetText("/ws")
 		authSelect.SetSelectedIndex(codeIndex(authCodes, string(model.AuthModeBoth)))
 		routeSelect.SetSelectedIndex(codeIndex(routeCodes, string(model.RoutingFull)))
+		ipPrefSelect.SetSelectedIndex(0) // auto
 		mtuEntry.SetText("0")
 	}
 
@@ -349,9 +358,10 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 			container.NewVBox(widget.NewLabel(i18n.T("FieldPassword")), passEntry),
 		),
 
-		container.NewGridWithColumns(2,
+		container.NewGridWithColumns(3,
 			container.NewVBox(widget.NewLabel(i18n.T("FieldAuthMode")), authSelect),
 			container.NewVBox(widget.NewLabel(i18n.T("FieldRoutingMode")), routeSelect),
+			container.NewVBox(widget.NewLabel(i18n.T("FieldIPPreference")), ipPrefSelect),
 		),
 
 		cidrSection,
@@ -394,7 +404,8 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 			mtuEntry.Text,
 			tlsCaPEMEntry.Text, tlsCaPathEntry.Text,
 			tlsPinnedHashEntry.Text, tlsInsecureCheck.Checked,
-			isNew) {
+			isNew,
+			selectedCode(ipPrefCodes, ipPrefSelect.SelectedIndex())) {
 			profileWin.Close()
 		}
 	})
@@ -414,7 +425,8 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 func (a *App) saveProfile(editing *model.ServerProfile,
 	name, protocol, host, ips, portStr, pathStr, user, password, authMode, routeMode,
 	cidrV4, cidrV6, cidrV4URLs, cidrV6URLs, mtuStr,
-	tlsCaPEM, tlsCaPath, tlsPinnedHash string, tlsInsecure, isNew bool) bool {
+	tlsCaPEM, tlsCaPath, tlsPinnedHash string, tlsInsecure, isNew bool,
+	ipPreference string) bool {
 	if name == "" || host == "" || user == "" {
 		showError(i18n.T("DlgValidationTitle"), i18n.T("DlgValidationMsg"), a.window)
 		return false
@@ -454,6 +466,7 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 			TLSCAPath:     tlsCaPath,
 			TLSInsecure:   tlsInsecure,
 			TLSPinnedHash: tlsPinnedHash,
+			IPPreference:  ipPreference,
 		}
 		id, err := a.db.CreateProfile(p)
 		if err != nil {
@@ -486,6 +499,7 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 		editing.TLSCAPath = tlsCaPath
 		editing.TLSInsecure = tlsInsecure
 		editing.TLSPinnedHash = tlsPinnedHash
+		editing.IPPreference = ipPreference
 		if err := a.db.UpdateProfile(editing); err != nil {
 			showError(i18n.T("DlgSaveError"), err.Error(), a.window)
 			return false

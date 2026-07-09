@@ -46,12 +46,12 @@ func main() {
 		for x := sx - sw/2; x < sx+sw/2; x++ {
 			// Shield shape: rounded top, pointed bottom.
 			progress := float64(y-sy) / float64(sh)
-			halfW := float64(sw)/2 * (1.0 - 0.3*progress*progress)
+			halfW := float64(sw) / 2 * (1.0 - 0.3*progress*progress)
 			if math.Abs(float64(x-sx)) < halfW && progress < 0.7 {
 				img.SetRGBA(x, y, shieldColor)
 			} else if progress >= 0.7 {
 				tp := (progress - 0.7) / 0.3
-				halfW2 := float64(sw)/2 * (1.0 - 0.3*0.49) * (1.0 - tp)
+				halfW2 := float64(sw) / 2 * (1.0 - 0.3*0.49) * (1.0 - tp)
 				if math.Abs(float64(x-sx)) < halfW2 {
 					img.SetRGBA(x, y, shieldColor)
 				}

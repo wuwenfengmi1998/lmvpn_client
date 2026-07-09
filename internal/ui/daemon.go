@@ -86,5 +86,3 @@ func ensureDaemon() (*ipc.Client, error) {
 	}
 	return nil, fmt.Errorf("daemon did not become reachable (check %s)", logFile)
 }
-
-

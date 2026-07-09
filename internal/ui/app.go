@@ -35,32 +35,32 @@ type App struct {
 	listSelectedIndex int
 
 	// UI widgets
-	profileSelect *widget.Select
-	stateLabel    *widget.Label
-	ipLabel       *widget.Label
-	ip6Label      *widget.Label
-	uptimeLabel   *widget.Label
-	rxV4Label     *widget.Label
-	txV4Label     *widget.Label
-	rxV6Label     *widget.Label
-	txV6Label     *widget.Label
-	rxTotalLabel  *widget.Label
-	txTotalLabel  *widget.Label
+	profileSelect    *widget.Select
+	stateLabel       *widget.Label
+	ipLabel          *widget.Label
+	ip6Label         *widget.Label
+	uptimeLabel      *widget.Label
+	rxV4Label        *widget.Label
+	txV4Label        *widget.Label
+	rxV6Label        *widget.Label
+	txV6Label        *widget.Label
+	rxTotalLabel     *widget.Label
+	txTotalLabel     *widget.Label
 	routingModeLabel *widget.Label
 	cidrV4Label      *widget.Label
 	cidrV6Label      *widget.Label
 	refreshCIDRBtn   *widget.Button
-	connectBtn    *widget.Button
-	disconnectBtn *widget.Button
+	connectBtn       *widget.Button
+	disconnectBtn    *widget.Button
 
 	// State
-	mu              sync.Mutex
-	ipcClient       *ipc.Client
-	profiles        []model.ServerProfile
-	currentProfile  *model.ServerProfile
+	mu               sync.Mutex
+	ipcClient        *ipc.Client
+	profiles         []model.ServerProfile
+	currentProfile   *model.ServerProfile
 	defaultProfileID int64
-	langSetting     string
-	windowHidden    bool
+	langSetting      string
+	windowHidden     bool
 }
 
 // Run initialises and starts the GUI application.
@@ -328,17 +328,17 @@ func (a *App) onResetDB() {
 			// Reset UI state.
 			a.currentProfile = nil
 			a.loadProfiles()
-		a.stateLabel.SetText(i18n.T("StateDisconnected"))
-		a.ipLabel.SetText(i18n.T("IpNone"))
-		a.ip6Label.SetText(i18n.T("Ip6None"))
-		a.uptimeLabel.SetText(i18n.T("UptimeNone"))
-		a.rxV4Label.SetText(i18n.T("RxV4Zero"))
-		a.txV4Label.SetText(i18n.T("TxV4Zero"))
-		a.rxV6Label.SetText(i18n.T("RxV6Zero"))
-		a.txV6Label.SetText(i18n.T("TxV6Zero"))
-		a.rxTotalLabel.SetText(i18n.T("RxTotalZero"))
-		a.txTotalLabel.SetText(i18n.T("TxTotalZero"))
-		a.setConnButtons(true, false)
+			a.stateLabel.SetText(i18n.T("StateDisconnected"))
+			a.ipLabel.SetText(i18n.T("IpNone"))
+			a.ip6Label.SetText(i18n.T("Ip6None"))
+			a.uptimeLabel.SetText(i18n.T("UptimeNone"))
+			a.rxV4Label.SetText(i18n.T("RxV4Zero"))
+			a.txV4Label.SetText(i18n.T("TxV4Zero"))
+			a.rxV6Label.SetText(i18n.T("RxV6Zero"))
+			a.txV6Label.SetText(i18n.T("TxV6Zero"))
+			a.rxTotalLabel.SetText(i18n.T("RxTotalZero"))
+			a.txTotalLabel.SetText(i18n.T("TxTotalZero"))
+			a.setConnButtons(true, false)
 		}, a.window).Show()
 }
 

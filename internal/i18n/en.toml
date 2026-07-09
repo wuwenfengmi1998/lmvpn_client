@@ -126,6 +126,11 @@ RoutingModeBypass = "Bypass CIDR"
 FetchTimingBefore = "Before Proxy"
 FetchTimingAfter = "After Proxy"
 
+FieldIPPreference = "IP Preference"
+IPPrefAuto = "Auto (Race)"
+IPPrefV4 = "IPv4 Only"
+IPPrefV6 = "IPv6 Only"
+
 BtnAddURL = "Add URL"
 BtnRemoveURL = "Remove"
 

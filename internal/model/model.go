@@ -19,6 +19,16 @@ const (
 	AuthModePassword AuthMode = "password" // {type:auth} first message
 )
 
+// IPPreference controls which IP address family is used when connecting
+// to a server by hostname (ServerIPs empty).
+type IPPreference string
+
+const (
+	IPPrefAuto IPPreference = "auto" // race all resolved addresses (v4 + v6)
+	IPPrefV4   IPPreference = "v4"   // only IPv4 addresses
+	IPPrefV6   IPPreference = "v6"   // only IPv6 addresses
+)
+
 // RoutingMode selects which traffic goes through the VPN tunnel.
 type RoutingMode string
 
@@ -61,10 +71,11 @@ type ServerProfile struct {
 	CIDRV6URLs      string      `json:"cidr_v6_urls"` // JSON array of CIDRURLSource for IPv6
 	MTUOverride     int         `json:"mtu_override"` // 0 = use server MTU
 	AutoConnect     bool        `json:"auto_connect"`
-	TLSCACert       string      `json:"tls_ca_cert"`      // inline CA certificate PEM (wss only)
-	TLSCAPath       string      `json:"tls_ca_path"`      // path to CA certificate file (wss only)
-	TLSInsecure     bool        `json:"tls_insecure"`     // skip certificate verification (wss only)
-	TLSPinnedHash   string      `json:"tls_pinned_hash"`  // SHA-256 fingerprint of server leaf cert (wss only)
+	TLSCACert       string      `json:"tls_ca_cert"`     // inline CA certificate PEM (wss only)
+	TLSCAPath       string      `json:"tls_ca_path"`     // path to CA certificate file (wss only)
+	TLSInsecure     bool        `json:"tls_insecure"`    // skip certificate verification (wss only)
+	TLSPinnedHash   string      `json:"tls_pinned_hash"` // SHA-256 fingerprint of server leaf cert (wss only)
+	IPPreference    string      `json:"ip_preference"`   // "auto", "v4", "v6" (hostname mode only)
 	CreatedAt       time.Time   `json:"created_at"`
 	LastConnectedAt *time.Time  `json:"last_connected_at"`
 }

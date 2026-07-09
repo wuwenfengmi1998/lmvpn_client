@@ -29,8 +29,8 @@ const (
 	CmdStop        = "stop"
 	CmdShutdown    = "shutdown"
 	CmdStats       = "stats"
-	CmdVersion     = "version"       // query daemon build version
-	CmdRefreshCIDR = "refresh_cidr"  // re-fetch CIDR URL sources and update routes
+	CmdVersion     = "version"      // query daemon build version
+	CmdRefreshCIDR = "refresh_cidr" // re-fetch CIDR URL sources and update routes
 )
 
 // Event types sent from daemon to GUI.
@@ -51,22 +51,23 @@ type Request struct {
 // package (which needs root-only TUN) into the GUI.
 type ClientConfig struct {
 	ServerURL     string          `json:"server_url"`
-	SNIHost       string          `json:"sni_host"`        // TLS SNI hostname for CDN
-	ServerIPs     []string        `json:"server_ips"`      // CDN edge IP list for failover
+	SNIHost       string          `json:"sni_host"`   // TLS SNI hostname for CDN
+	ServerIPs     []string        `json:"server_ips"` // CDN edge IP list for failover
 	Username      string          `json:"username"`
 	Password      string          `json:"password"`
 	Token         string          `json:"token"`
 	AuthMode      string          `json:"auth_mode"`
-	RoutingMode   string          `json:"routing_mode"`    // "full", "proxy", "bypass"
-	CIDRV4        []string        `json:"cidr_v4"`         // static IPv4 CIDRs
-	CIDRV6        []string        `json:"cidr_v6"`         // static IPv6 CIDRs
-	CIDRV4URLs    []CIDRURLSource `json:"cidr_v4_urls"`   // IPv4 CIDR URL sources
-	CIDRV6URLs    []CIDRURLSource `json:"cidr_v6_urls"`   // IPv6 CIDR URL sources
+	RoutingMode   string          `json:"routing_mode"` // "full", "proxy", "bypass"
+	CIDRV4        []string        `json:"cidr_v4"`      // static IPv4 CIDRs
+	CIDRV6        []string        `json:"cidr_v6"`      // static IPv6 CIDRs
+	CIDRV4URLs    []CIDRURLSource `json:"cidr_v4_urls"` // IPv4 CIDR URL sources
+	CIDRV6URLs    []CIDRURLSource `json:"cidr_v6_urls"` // IPv6 CIDR URL sources
 	MTUOverride   int             `json:"mtu_override"`
 	TLSCACert     string          `json:"tls_ca_cert"`     // inline CA cert PEM (wss only)
 	TLSCAPath     string          `json:"tls_ca_path"`     // CA cert file path (wss only)
 	TLSInsecure   bool            `json:"tls_insecure"`    // skip cert verification (wss only)
 	TLSPinnedHash string          `json:"tls_pinned_hash"` // SHA-256 cert pin (wss only)
+	IPPreference  string          `json:"ip_preference"`   // "auto", "v4", "v6" (hostname mode only)
 }
 
 // CIDRURLSource describes a URL that provides a CIDR list. It mirrors
@@ -83,7 +84,7 @@ type Event struct {
 	State       string          `json:"state,omitempty"`
 	ConnectStep string          `json:"connect_step,omitempty"` // current connection step (for EvState)
 	Stats       *stats.Snapshot `json:"stats,omitempty"`
-	Code        string          `json:"code,omitempty"`          // stable auth-error code for EvError
+	Code        string          `json:"code,omitempty"` // stable auth-error code for EvError
 	Message     string          `json:"message,omitempty"`
 }
 

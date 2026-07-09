@@ -56,5 +56,3 @@ func LogFile() string { return Paths.Log + "/lmvpn.log" }
 
 // DaemonLogFile returns the path to the daemon log file.
 func DaemonLogFile() string { return Paths.Log + "/lmvpn-daemon.log" }
-
-

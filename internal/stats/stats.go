@@ -26,14 +26,16 @@ const (
 // counters in Snapshot, so callers that only need the total still
 // work.
 type Stats struct {
-	RxBytesV4   atomic.Int64
-	RxBytesV6   atomic.Int64
-	TxBytesV4   atomic.Int64
-	TxBytesV6   atomic.Int64
-	ConnectedAt atomic.Int64 // unix timestamp, 0 = not connected
-	state       atomic.Value // State
-	assignedIP  atomic.Value // string (IPv4)
-	assignedIP6 atomic.Value // string (IPv6, may be empty)
+	RxBytesV4    atomic.Int64
+	RxBytesV6    atomic.Int64
+	TxBytesV4    atomic.Int64
+	TxBytesV6    atomic.Int64
+	ConnectedAt  atomic.Int64 // unix timestamp, 0 = not connected
+	state        atomic.Value // State
+	assignedIP   atomic.Value // string (IPv4)
+	assignedIP6  atomic.Value // string (IPv6, may be empty)
+	serverHost   atomic.Value // string (server hostname or IP from URL)
+	connectedIP  atomic.Value // string (actual remote IP of the connection)
 	routeLoading atomic.Bool  // true while deferred routes are being applied
 	connectStep  atomic.Value // string (human-readable connection step)
 	cidrError    atomic.Value // string (CIDR fetch error message, empty = no error)
@@ -79,6 +81,8 @@ func New() *Stats {
 	s.state.Store(StateDisconnected)
 	s.assignedIP.Store("")
 	s.assignedIP6.Store("")
+	s.serverHost.Store("")
+	s.connectedIP.Store("")
 	s.connectStep.Store("")
 	s.cidrError.Store("")
 	return s
@@ -90,12 +94,16 @@ func (s *Stats) SetState(st State) { s.state.Store(st) }
 // State returns the current state.
 func (s *Stats) State() State { return s.state.Load().(State) }
 
-// SetConnected marks the session as connected, recording the time and
-// assigned IP addresses. ip6 may be empty for an IPv4-only server.
-func (s *Stats) SetConnected(ip, ip6 string) {
+// SetConnected marks the session as connected, recording the time,
+// assigned IP addresses, and server connection info. ip6 may be empty
+// for an IPv4-only server. serverHost is the hostname/IP from the
+// server URL; connectedIP is the actual remote IP of the connection.
+func (s *Stats) SetConnected(ip, ip6, serverHost, connectedIP string) {
 	s.ConnectedAt.Store(time.Now().Unix())
 	s.assignedIP.Store(ip)
 	s.assignedIP6.Store(ip6)
+	s.serverHost.Store(serverHost)
+	s.connectedIP.Store(connectedIP)
 	s.state.Store(StateConnected)
 }
 
@@ -104,6 +112,8 @@ func (s *Stats) SetDisconnected() {
 	s.ConnectedAt.Store(0)
 	s.assignedIP.Store("")
 	s.assignedIP6.Store("")
+	s.serverHost.Store("")
+	s.connectedIP.Store("")
 	s.state.Store(StateDisconnected)
 	s.routeLoading.Store(false)
 	s.connectStep.Store("")
@@ -149,6 +159,12 @@ func (s *Stats) AssignedIP() string { return s.assignedIP.Load().(string) }
 // AssignedIP6 returns the server-assigned tunnel IPv6 (may be empty).
 func (s *Stats) AssignedIP6() string { return s.assignedIP6.Load().(string) }
 
+// ServerHost returns the server hostname/IP from the connection URL.
+func (s *Stats) ServerHost() string { return s.serverHost.Load().(string) }
+
+// ConnectedIP returns the actual remote IP of the connection.
+func (s *Stats) ConnectedIP() string { return s.connectedIP.Load().(string) }
+
 // Snapshot returns a point-in-time copy of all counters.
 //
 // Per-family byte counters are read directly. The combined RxBytes/
@@ -174,6 +190,8 @@ type Snapshot struct {
 	ConnectedAt time.Time
 	AssignedIP  string
 	AssignedIP6 string
+	ServerHost  string `json:"server_host,omitempty"`  // server hostname/IP from URL
+	ConnectedIP string `json:"connected_ip,omitempty"` // actual remote IP of the connection
 	State       State
 	Uptime      time.Duration
 
@@ -184,8 +202,8 @@ type Snapshot struct {
 	CIDRV6Total  int    `json:"cidr_v6_total,omitempty"`
 	CIDRV6Hits   int    `json:"cidr_v6_hits,omitempty"`
 	RouteLoading bool   `json:"route_loading,omitempty"` // deferred routes being applied
-	ConnectStep  string `json:"connect_step,omitempty"` // current connection step
-	CIDRError    string `json:"cidr_error,omitempty"`   // CIDR fetch error message
+	ConnectStep  string `json:"connect_step,omitempty"`  // current connection step
+	CIDRError    string `json:"cidr_error,omitempty"`    // CIDR fetch error message
 }
 
 // Snapshot returns a point-in-time copy of the statistics.
@@ -203,6 +221,8 @@ func (s *Stats) Snapshot() Snapshot {
 		TxBytes:     txv4 + txv6,
 		AssignedIP:  s.AssignedIP(),
 		AssignedIP6: s.AssignedIP6(),
+		ServerHost:  s.ServerHost(),
+		ConnectedIP: s.ConnectedIP(),
 		State:       s.State(),
 	}
 	ts := s.ConnectedAt.Load()

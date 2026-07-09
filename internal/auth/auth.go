@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"lmvpn/internal/transport"
 )
 
 // LoginResult holds the response from a successful /api/login call.
@@ -49,19 +51,25 @@ type errorResponse struct {
 // host will be an IP address, but the certificate must be verified
 // against the real hostname (set tlsCfg.ServerName).
 //
+// ipPreference controls which IP address families are used when
+// resolving the server hostname ("auto", "v4", "v6").
+//
 // ctx allows cancellation of the HTTP request (e.g. when the VPN
 // session is disconnected while login is in flight).
-func Login(ctx context.Context, baseURL, username, password string, tlsCfg *tls.Config) (*LoginResult, error) {
+func Login(ctx context.Context, baseURL, username, password string, tlsCfg *tls.Config, ipPreference string) (*LoginResult, error) {
 	body, err := json.Marshal(loginRequest{Username: username, Password: password})
 	if err != nil {
 		return nil, err
 	}
 
 	url := strings.TrimRight(baseURL, "/") + "/api/login"
-	client := &http.Client{Timeout: 15 * time.Second}
-	if tlsCfg != nil {
-		client.Transport = &http.Transport{TLSClientConfig: tlsCfg}
+	httpTransport := &http.Transport{
+		DialContext: transport.NewRaceDialer(ipPreference),
 	}
+	if tlsCfg != nil {
+		httpTransport.TLSClientConfig = tlsCfg
+	}
+	client := &http.Client{Timeout: 15 * time.Second, Transport: httpTransport}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {

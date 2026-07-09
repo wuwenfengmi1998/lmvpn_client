@@ -33,23 +33,24 @@ import (
 
 // SessionConfig describes how to connect to a VPN server.
 type SessionConfig struct {
-	ServerURL   string
-	SNIHost     string   // TLS SNI hostname for CDN
-	ServerIPs   []string // CDN edge IPs for failover
-	Username    string
-	Password    string
-	AuthMode    model.AuthMode
-	Token       string // pre-obtained JWT (empty = fetch via HTTP login)
-	RoutingMode route.Mode
-	CIDRV4      []string              // static IPv4 CIDRs (proxy/bypass mode)
-	CIDRV6      []string              // static IPv6 CIDRs (proxy/bypass mode)
-	CIDRV4URLs  []model.CIDRURLSource // IPv4 CIDR URL sources
-	CIDRV6URLs  []model.CIDRURLSource // IPv6 CIDR URL sources
-	MTUOverride int                   // 0 = use server MTU
-	TLSCACert     string // inline CA cert PEM (wss only)
-	TLSCAPath     string // CA cert file path (wss only)
-	TLSInsecure   bool   // skip cert verification (wss only)
-	TLSPinnedHash string // SHA-256 cert pin (wss only)
+	ServerURL     string
+	SNIHost       string   // TLS SNI hostname for CDN
+	ServerIPs     []string // CDN edge IPs for failover
+	Username      string
+	Password      string
+	AuthMode      model.AuthMode
+	Token         string // pre-obtained JWT (empty = fetch via HTTP login)
+	RoutingMode   route.Mode
+	CIDRV4        []string              // static IPv4 CIDRs (proxy/bypass mode)
+	CIDRV6        []string              // static IPv6 CIDRs (proxy/bypass mode)
+	CIDRV4URLs    []model.CIDRURLSource // IPv4 CIDR URL sources
+	CIDRV6URLs    []model.CIDRURLSource // IPv6 CIDR URL sources
+	MTUOverride   int                   // 0 = use server MTU
+	TLSCACert     string                // inline CA cert PEM (wss only)
+	TLSCAPath     string                // CA cert file path (wss only)
+	TLSInsecure   bool                  // skip cert verification (wss only)
+	TLSPinnedHash string                // SHA-256 cert pin (wss only)
+	IPPreference  string                // "auto" (default), "v4", "v6" - hostname mode only
 }
 
 // SessionManager manages a single VPN session with auto-reconnect.
@@ -212,8 +213,16 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 	backoff := time.Second
 	maxBackoff := 60 * time.Second
 
-	// Build the full target list: original host first, then CDN IPs.
-	targets := append([]string{""}, cfg.ServerIPs...) // "" = use base URL
+	// Build the full target list. When ServerIPs is empty, connect via
+	// hostname (IPPreference + race dialer apply). When ServerIPs is
+	// non-empty, skip hostname and use IPs directly with failover.
+	usingHostname := len(cfg.ServerIPs) == 0
+	var targets []string
+	if usingHostname {
+		targets = []string{""} // "" = use base URL (hostname)
+	} else {
+		targets = cfg.ServerIPs // direct IP mode: sequential failover
+	}
 	ipIndex := 0
 
 	for {
@@ -223,7 +232,7 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 		}
 
 		targetIP := ""
-		if ipIndex > 0 && ipIndex < len(targets) {
+		if ipIndex < len(targets) {
 			targetIP = targets[ipIndex]
 		}
 
@@ -242,13 +251,13 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 			sm.cleanupResources()
 
 			// A TLS certificate verification failure on the original
-			// hostname (ipIndex == 0) is not retryable: the cert won't
-			// change between attempts, so stop the loop and surface the
-			// reason to the user. On a CDN edge IP (ipIndex > 0) the
+			// hostname (ipIndex == 0, hostname mode) is not retryable:
+			// the cert won't change between attempts, so stop the loop
+			// and surface the reason to the user. On a CDN edge IP the
 			// TLS error likely means that IP points to a different
 			// server; skip it and try the next target.
 			if tlsconfig.IsTLSError(err) {
-				if ipIndex == 0 {
+				if usingHostname && ipIndex == 0 {
 					log.L().Warn("fatal TLS error, stopping reconnect", "error", err)
 					sm.setState(stats.StateError)
 					if sm.onError != nil {
@@ -258,7 +267,7 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 					sm.cleanup()
 					return
 				}
-				log.L().Warn("TLS error on CDN IP, skipping",
+				log.L().Warn("TLS error on IP, skipping",
 					"index", ipIndex, "ip", targets[ipIndex], "error", err)
 			}
 
@@ -268,7 +277,7 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 			// means the IP points to a different server that returned
 			// 401/403, so skip it instead of stopping the loop.
 			if code, msg, isFatal := fatalAuthError(err); isFatal {
-				if ipIndex == 0 {
+				if usingHostname && ipIndex == 0 {
 					log.L().Warn("fatal auth error, stopping reconnect", "code", code, "message", msg)
 					sm.setState(stats.StateError)
 					if sm.onError != nil {
@@ -278,16 +287,16 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 					sm.cleanup()
 					return
 				}
-				log.L().Warn("auth error on CDN IP, skipping",
+				log.L().Warn("auth error on IP, skipping",
 					"index", ipIndex, "ip", targets[ipIndex], "code", code)
 			}
 
 			sm.setState(stats.StateReconnecting)
 
-			// Try next CDN IP immediately.
+			// Try next target IP immediately.
 			ipIndex++
 			if ipIndex < len(targets) {
-				log.L().Info("trying next CDN IP", "index", ipIndex, "ip", targets[ipIndex])
+				log.L().Info("trying next server IP", "index", ipIndex, "ip", targets[ipIndex])
 				continue
 			}
 			// All targets exhausted; reset and wait with backoff.
@@ -389,7 +398,7 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 		if err != nil {
 			return fmt.Errorf("parse server URL: %w", err)
 		}
-		result, err := auth.Login(ctx, httpBase, cfg.Username, cfg.Password, tlsCfg)
+		result, err := auth.Login(ctx, httpBase, cfg.Username, cfg.Password, tlsCfg, cfg.IPPreference)
 		if err != nil {
 			if cfg.AuthMode == model.AuthModeBoth {
 				// Fall back to password auth.
@@ -405,11 +414,12 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 	// Prepare the TUN + route setup callback (called during handshake,
 	// between receiving init and sending ready).
 	handshake := transport.HandshakeConfig{
-		ServerURL: serverURL,
-		SNIHost:   cfg.SNIHost,
-		Token:     token,
-		Username:  cfg.Username,
-		Password:  cfg.Password,
+		ServerURL:    serverURL,
+		SNIHost:      cfg.SNIHost,
+		Token:        token,
+		Username:     cfg.Username,
+		Password:     cfg.Password,
+		IPPreference: cfg.IPPreference,
 		OnInit: func(init protocol.InitMessage) error {
 			return sm.setupTUN(init, cfg, beforeCIDRs)
 		},
@@ -448,13 +458,16 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 	sm.conn = conn
 	sm.mu.Unlock()
 
-	sm.stats.SetConnected(conn.Init().IP, conn.Init().IP6)
+	serverHost := serverHostFromURL(cfg.ServerURL)
+	connectedIP := conn.RemoteIP()
+	sm.stats.SetConnected(conn.Init().IP, conn.Init().IP6, serverHost, connectedIP)
 	sm.stats.SetConnectStep("load_routes")
 	sm.setState(stats.StateConnected)
 	log.L().Info("VPN connected",
 		"ip", conn.Init().IP, "server_ip", conn.Init().ServerIP,
 		"ip6", conn.Init().IP6, "server_ip6", conn.Init().ServerIP6,
-		"mtu", conn.Init().MTU)
+		"mtu", conn.Init().MTU,
+		"server_host", serverHost, "connected_ip", connectedIP)
 
 	// Start stats reporter.
 	statsDone := make(chan struct{})

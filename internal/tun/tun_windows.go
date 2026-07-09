@@ -58,8 +58,8 @@ func createTUN(name string) (Device, error) {
 	}, nil
 }
 
-func (d *wintunDevice) Name() string                { return d.name }
-func (d *wintunDevice) Close() error                { d.session.End(); return d.adapter.Close() }
+func (d *wintunDevice) Name() string { return d.name }
+func (d *wintunDevice) Close() error { d.session.End(); return d.adapter.Close() }
 
 func (d *wintunDevice) Read(p []byte) (int, error) {
 	for {
@@ -153,5 +153,3 @@ func execCmd(name string, arg ...string) error {
 	}
 	return nil
 }
-
-

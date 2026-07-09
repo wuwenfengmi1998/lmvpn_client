@@ -165,6 +165,7 @@ func (d *daemon) startSession(conn net.Conn, req ipc.Request) {
 		TLSCAPath:     req.Config.TLSCAPath,
 		TLSInsecure:   req.Config.TLSInsecure,
 		TLSPinnedHash: req.Config.TLSPinnedHash,
+		IPPreference:  req.Config.IPPreference,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

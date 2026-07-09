@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"sync"
@@ -30,13 +31,14 @@ import (
 
 // HandshakeConfig configures a single connection attempt.
 type HandshakeConfig struct {
-	ServerURL string                           // e.g. wss://vpn.example.com/ws
-	SNIHost   string                           // TLS SNI hostname for CDN edge connections
-	Token     string                           // JWT; if non-empty, used via ?token= (method A)
-	Username  string                           // for password auth (method B), or fallback
-	Password  string                           // for password auth (method B), or fallback
-	OnInit    func(protocol.InitMessage) error // configure TUN; nil = auto-ready
-	TLSConfig *tls.Config                      // pre-built TLS config (nil = derive from SNIHost)
+	ServerURL    string                           // e.g. wss://vpn.example.com/ws
+	SNIHost      string                           // TLS SNI hostname for CDN edge connections
+	Token        string                           // JWT; if non-empty, used via ?token= (method A)
+	Username     string                           // for password auth (method B), or fallback
+	Password     string                           // for password auth (method B), or fallback
+	OnInit       func(protocol.InitMessage) error // configure TUN; nil = auto-ready
+	TLSConfig    *tls.Config                      // pre-built TLS config (nil = derive from SNIHost)
+	IPPreference string                           // "auto" (default), "v4", "v6" - hostname mode only
 }
 
 // Conn is an established VPN tunnel connection.
@@ -53,6 +55,7 @@ type Conn struct {
 // error occurs.
 func Connect(ctx context.Context, cfg HandshakeConfig) (*Conn, error) {
 	dialer := websocket.Dialer{
+		NetDialContext:   NewRaceDialer(cfg.IPPreference),
 		HandshakeTimeout: 15 * time.Second,
 		ReadBufferSize:   4096, // match server (handler.go:17)
 		WriteBufferSize:  4096, // match server (handler.go:18)
@@ -268,6 +271,20 @@ func (c *Conn) AssignedIP() string { return c.init.IP }
 
 // AssignedIP6 returns the IPv6 assigned by the server (empty if none).
 func (c *Conn) AssignedIP6() string { return c.init.IP6 }
+
+// RemoteIP returns the remote IP address of the underlying TCP
+// connection (the actual server/CDN IP the WebSocket is connected to).
+// Returns an empty string if the connection is not established.
+func (c *Conn) RemoteIP() string {
+	if c.ws == nil {
+		return ""
+	}
+	addr := c.ws.RemoteAddr()
+	if tcpAddr, ok := addr.(*net.TCPAddr); ok {
+		return tcpAddr.IP.String()
+	}
+	return addr.String()
+}
 
 // Close terminates the connection.
 func (c *Conn) Close() error {

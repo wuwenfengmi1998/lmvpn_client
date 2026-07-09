@@ -29,7 +29,7 @@ func launchElevated(exe, daemonBin, home string, uid, gid int) error {
 }
 
 // shellQuote wraps a string in single quotes for shell safety.
-// Embedded single quotes are escaped using the '\'' pattern.
+// Embedded single quotes are escaped using the '\” pattern.
 func shellQuote(s string) string {
 	result := "'"
 	for _, r := range s {

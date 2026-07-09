@@ -126,6 +126,11 @@ RoutingModeBypass = "绕过 CIDR"
 FetchTimingBefore = "代理前获取"
 FetchTimingAfter = "代理后获取"
 
+FieldIPPreference = "IP 偏好"
+IPPrefAuto = "自动（竞速）"
+IPPrefV4 = "仅 IPv4"
+IPPrefV6 = "仅 IPv6"
+
 BtnAddURL = "添加 URL"
 BtnRemoveURL = "删除"
 

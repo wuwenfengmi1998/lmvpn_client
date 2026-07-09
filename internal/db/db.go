@@ -55,7 +55,10 @@ func (s *Store) migrate() error {
 	if err := s.migrateV4(); err != nil {
 		return err
 	}
-	return s.migrateV5()
+	if err := s.migrateV5(); err != nil {
+		return err
+	}
+	return s.migrateV6()
 }
 
 func (s *Store) migrateV2() error {
@@ -290,6 +293,20 @@ func (s *Store) migrateV5() error {
 	return nil
 }
 
+// migrateV6 adds the ip_preference column to server_profiles for
+// controlling IPv4/IPv6 address selection when connecting by hostname.
+// Idempotent: skips if the column already exists.
+func (s *Store) migrateV6() error {
+	if columnExists(s.db, "server_profiles", "ip_preference") {
+		return nil
+	}
+	_, err := s.db.Exec(`ALTER TABLE server_profiles ADD COLUMN ip_preference TEXT NOT NULL DEFAULT 'auto'`)
+	if err != nil {
+		return fmt.Errorf("migrate v6 add ip_preference: %w", err)
+	}
+	return nil
+}
+
 // splitCIDRsByFamily splits a comma-separated CIDR string into IPv4 and
 // IPv6 parts. Used for migration from the old custom_cidrs column.
 func splitCIDRsByFamily(customCIDRs string) (v4, v6 string) {
@@ -354,6 +371,7 @@ CREATE TABLE IF NOT EXISTS server_profiles (
 	cidr_v6_urls    TEXT    NOT NULL DEFAULT '',
 	mtu_override    INTEGER NOT NULL DEFAULT 0,
 	auto_connect    INTEGER NOT NULL DEFAULT 0,
+	ip_preference   TEXT    NOT NULL DEFAULT 'auto',
 	created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	last_connected_at DATETIME
 );

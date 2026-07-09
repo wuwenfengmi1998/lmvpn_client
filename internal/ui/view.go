@@ -215,6 +215,7 @@ func (a *App) onConnect() {
 			TLSCAPath:     p.TLSCAPath,
 			TLSInsecure:   p.TLSInsecure,
 			TLSPinnedHash: p.TLSPinnedHash,
+			IPPreference:  p.IPPreference,
 		}
 		if err := ipc.SendStart(client, cfg); err != nil {
 			fyne.Do(func() {
@@ -428,6 +429,9 @@ func (a *App) applyStats(s stats.Snapshot) {
 		stepLabel := connectStepLabel(s.ConnectStep)
 		if stepLabel != "" {
 			a.stateLabel.SetText(i18n.T("StateConnected") + " (" + stepLabel + ")")
+		} else if s.ServerHost != "" && s.ConnectedIP != "" {
+			a.stateLabel.SetText(fmt.Sprintf("%s (%s -> %s)",
+				i18n.T("StateConnected"), s.ServerHost, s.ConnectedIP))
 		} else {
 			a.stateLabel.SetText(i18n.T("StateConnected"))
 		}
