@@ -141,3 +141,6 @@ PlaceholderTLSPinnedHash = "sha256:a1b2c3..."
 BtnBrowse = "浏览..."
 DlgTLSError = "TLS 证书错误"
 TLSErrorVerification = "服务器证书验证失败。"
+
+DlgBiometricCanceled = "认证已取消。"
+TouchIDPrompt = "验证指纹以访问 VPN 密码"

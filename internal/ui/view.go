@@ -3,12 +3,14 @@ package ui
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"time"
 
 	"lmvpn/internal/i18n"
 	"lmvpn/internal/ipc"
+	"lmvpn/internal/keychain"
 	"lmvpn/internal/model"
 	"lmvpn/internal/stats"
 
@@ -172,11 +174,17 @@ func (a *App) onConnect() {
 		password, err := a.kc.GetPassword(a.currentProfile.Name)
 		if err != nil {
 			fyne.Do(func() {
-				showError(i18n.T("DlgCredentialError"),
-					i18n.T("DlgCredentialErrorMsg"),
-					a.window)
-				a.stateLabel.SetText(i18n.T("StateDisconnected"))
-				a.setConnButtons(true, false)
+				if errors.Is(err, keychain.ErrUserCanceled) {
+					// User canceled the Touch ID / password prompt.
+					a.stateLabel.SetText(i18n.T("StateDisconnected"))
+					a.setConnButtons(true, false)
+				} else {
+					showError(i18n.T("DlgCredentialError"),
+						i18n.T("DlgCredentialErrorMsg"),
+						a.window)
+					a.stateLabel.SetText(i18n.T("StateDisconnected"))
+					a.setConnButtons(true, false)
+				}
 			})
 			return
 		}

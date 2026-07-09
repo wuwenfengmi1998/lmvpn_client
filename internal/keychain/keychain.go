@@ -19,6 +19,11 @@ const ServiceName = paths.BundleID
 // ErrNotFound is returned when a secret is not present in the store.
 var ErrNotFound = fmt.Errorf("secret not found")
 
+// ErrUserCanceled is returned when the user cancels a biometric
+// authentication prompt (e.g. Touch ID) or the system cannot complete
+// authentication.
+var ErrUserCanceled = fmt.Errorf("user canceled authentication")
+
 // Store is the secret storage interface.
 type Store interface {
 	SetPassword(profileName, password string) error

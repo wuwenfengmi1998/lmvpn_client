@@ -98,6 +98,9 @@ func Run() {
 		log.L().Error("init i18n", "error", err)
 	}
 
+	// Set the localized Touch ID prompt for keychain access (macOS).
+	setTouchIDPromptFromI18n()
+
 	a := &App{
 		fyneApp:           app.NewWithID(paths.BundleID),
 		db:                store,
@@ -357,6 +360,9 @@ func (a *App) changeLanguage(lang string) {
 
 	// Switch the active localizer.
 	i18n.SetLanguage(lang)
+
+	// Update the Touch ID prompt text for the new language.
+	setTouchIDPromptFromI18n()
 
 	// Rebuild everything that holds cached strings.
 	a.rebuildUI()

@@ -141,3 +141,6 @@ PlaceholderTLSPinnedHash = "sha256:a1b2c3..."
 BtnBrowse = "Browse..."
 DlgTLSError = "TLS Certificate Error"
 TLSErrorVerification = "Server certificate verification failed."
+
+DlgBiometricCanceled = "Authentication was canceled."
+TouchIDPrompt = "authenticate to access your VPN password"

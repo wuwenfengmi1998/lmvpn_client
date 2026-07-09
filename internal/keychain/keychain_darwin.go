@@ -14,15 +14,34 @@ const (
 	tokenAccountPrefix    = "token:"
 )
 
+// touchIDPrompt is the localized prompt shown in the Touch ID dialog.
+// It is set by the UI layer at startup via SetTouchIDPrompt.
+var touchIDPrompt = "authenticate to access your VPN password"
+
+// SetTouchIDPrompt sets the localized prompt text shown in the Touch ID
+// dialog when retrieving secrets from the keychain.
+func SetTouchIDPrompt(prompt string) {
+	if prompt != "" {
+		touchIDPrompt = prompt
+	}
+}
+
 // DarwinStore implements Store using the macOS Keychain.
 type DarwinStore struct{}
 
-// New returns a macOS Keychain-backed Store.
+// New returns a macOS Keychain-backed Store. On Macs with Touch ID,
+// secrets are stored with biometric (Touch ID) protection; on older
+// Macs without a biometric sensor, the standard keychain accessibility
+// is used as a fallback.
 func New() Store {
 	return DarwinStore{}
 }
 
 func (DarwinStore) setItem(account, secret string) error {
+	// Use biometric-protected storage when Touch ID is available.
+	if biometricAvailable() {
+		return storeBiometricItemGo(ServiceName, account, secret)
+	}
 	item := keychain.NewItem()
 	item.SetSecClass(keychain.SecClassGenericPassword)
 	item.SetService(ServiceName)
@@ -38,6 +57,11 @@ func (DarwinStore) setItem(account, secret string) error {
 }
 
 func (DarwinStore) getItem(account string) (string, error) {
+	// When Touch ID is available, use the direct CGo path which can
+	// show a biometric prompt for protected items.
+	if biometricAvailable() {
+		return getBiometricItemGo(ServiceName, account, touchIDPrompt)
+	}
 	item := keychain.NewItem()
 	item.SetSecClass(keychain.SecClassGenericPassword)
 	item.SetService(ServiceName)
@@ -55,6 +79,11 @@ func (DarwinStore) getItem(account string) (string, error) {
 }
 
 func (DarwinStore) deleteItem(account string) error {
+	// Use the direct CGo delete which works for both biometric and
+	// non-biometric items (and doesn't trigger a Touch ID prompt).
+	if biometricAvailable() {
+		return deleteBiometricItemGo(ServiceName, account)
+	}
 	item := keychain.NewItem()
 	item.SetSecClass(keychain.SecClassGenericPassword)
 	item.SetService(ServiceName)
