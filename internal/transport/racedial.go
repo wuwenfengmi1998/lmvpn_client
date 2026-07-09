@@ -99,13 +99,13 @@ func raceDial(ctx context.Context, network string, ips []string, port string) (n
 		go func(target string) {
 			d := &net.Dialer{}
 			c, err := d.DialContext(raceCtx, network, net.JoinHostPort(target, port))
-			select {
-			case resultCh <- result{conn: c, err: err}:
-			case <-raceCtx.Done():
-				if c != nil {
-					c.Close()
-				}
-			}
+			// Always send the result: resultCh is buffered (len(ips)),
+			// so this never blocks. Do NOT use a select with
+			// <-raceCtx.Done() here - when the context is cancelled
+			// both cases would be ready and Go's random select pick
+			// could skip the send, causing the drain loop below to
+			// block forever.
+			resultCh <- result{conn: c, err: err}
 		}(ip)
 	}
 
@@ -117,7 +117,8 @@ func raceDial(ctx context.Context, network string, ips []string, port string) (n
 			// any late successful connections.
 			cancel()
 			for j := i + 1; j < len(ips); j++ {
-				if late := <-resultCh; late.conn != nil {
+				late := <-resultCh
+				if late.conn != nil {
 					late.conn.Close()
 				}
 			}
