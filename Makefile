@@ -11,7 +11,7 @@ GO          = go
 CGO_ENABLED = 1
 WINDRES     ?= x86_64-w64-mingw32-windres
 MINGW_CC    ?= x86_64-w64-mingw32-gcc
-SEMVER      ?= 0.6.2
+SEMVER      ?= 0.6.3
 GIT_HASH    = $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 VERSION     = $(SEMVER)-$(GIT_HASH)
 LDFLAGS     = -s -w -X lmvpn/internal/version.Version=$(VERSION)
