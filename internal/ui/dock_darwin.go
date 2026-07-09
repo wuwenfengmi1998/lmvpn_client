@@ -25,12 +25,6 @@ static BOOL appShouldHandleReopen(id self, SEL cmd, id sender, BOOL flag) {
     return YES;
 }
 
-static void setDockIconVisible(int visible) {
-	Class cls = objc_getClass("NSApplication");
-	id app = ((id (*)(Class, SEL))objc_msgSend)(cls, sel_getUid("sharedApplication"));
-	((void (*)(id, SEL, long))objc_msgSend)(app, sel_getUid("setActivationPolicy:"), visible ? 0 : 1);
-}
-
 static void cmActivateApp(void) {
 	Class cls = objc_getClass("NSApplication");
 	id app = ((id (*)(Class, SEL))objc_msgSend)(cls, sel_getUid("sharedApplication"));
@@ -52,9 +46,6 @@ static void cmRegisterReopenHandler(void) {
 }
 */
 import "C"
-
-func showDockIcon() { C.setDockIconVisible(1) }
-func hideDockIcon() { C.setDockIconVisible(0) }
 
 func activateApp() { C.cmActivateApp() }
 

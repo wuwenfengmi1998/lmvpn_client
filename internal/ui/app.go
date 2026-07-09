@@ -130,7 +130,6 @@ func Run() {
 				fyne.Do(func() {
 					a.windowHidden = false
 					activateApp()
-					showDockIcon()
 					a.window.Show()
 					a.window.RequestFocus()
 				})
@@ -149,7 +148,6 @@ func Run() {
 			if a.windowHidden {
 				a.windowHidden = false
 				activateApp()
-				showDockIcon()
 				fyne.Do(func() {
 					if a.windowHidden {
 						return
@@ -173,7 +171,6 @@ func Run() {
 	a.window.SetCloseIntercept(func() {
 		if cfg.CloseToTray {
 			a.windowHidden = true
-			hideDockIcon()
 			a.window.Hide()
 		} else {
 			a.quit()
