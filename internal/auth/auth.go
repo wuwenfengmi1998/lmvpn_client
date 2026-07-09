@@ -6,6 +6,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -47,7 +48,10 @@ type errorResponse struct {
 // client. This is essential when connecting via CDN edge IPs: the URL
 // host will be an IP address, but the certificate must be verified
 // against the real hostname (set tlsCfg.ServerName).
-func Login(baseURL, username, password string, tlsCfg *tls.Config) (*LoginResult, error) {
+//
+// ctx allows cancellation of the HTTP request (e.g. when the VPN
+// session is disconnected while login is in flight).
+func Login(ctx context.Context, baseURL, username, password string, tlsCfg *tls.Config) (*LoginResult, error) {
 	body, err := json.Marshal(loginRequest{Username: username, Password: password})
 	if err != nil {
 		return nil, err
@@ -58,7 +62,14 @@ func Login(baseURL, username, password string, tlsCfg *tls.Config) (*LoginResult
 	if tlsCfg != nil {
 		client.Transport = &http.Transport{TLSClientConfig: tlsCfg}
 	}
-	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create login request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("login request: %w", err)
 	}

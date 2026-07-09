@@ -16,9 +16,11 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"lmvpn/internal/auth"
+	"lmvpn/internal/cidrsource"
 	"lmvpn/internal/log"
 	"lmvpn/internal/model"
 	"lmvpn/internal/protocol"
@@ -39,8 +41,11 @@ type SessionConfig struct {
 	AuthMode    model.AuthMode
 	Token       string // pre-obtained JWT (empty = fetch via HTTP login)
 	RoutingMode route.Mode
-	CustomCIDRs []string
-	MTUOverride int // 0 = use server MTU
+	CIDRV4      []string              // static IPv4 CIDRs (proxy/bypass mode)
+	CIDRV6      []string              // static IPv6 CIDRs (proxy/bypass mode)
+	CIDRV4URLs  []model.CIDRURLSource // IPv4 CIDR URL sources
+	CIDRV6URLs  []model.CIDRURLSource // IPv6 CIDR URL sources
+	MTUOverride int                   // 0 = use server MTU
 	TLSCACert     string // inline CA cert PEM (wss only)
 	TLSCAPath     string // CA cert file path (wss only)
 	TLSInsecure   bool   // skip cert verification (wss only)
@@ -61,6 +66,9 @@ type SessionManager struct {
 	routeMgr *route.Manager
 	conn     *transport.Conn
 	done     chan struct{}
+
+	// CIDR hit tracking. Set during setupTUN, cleared on cleanup.
+	cidrTracker *cidrTracker
 
 	// EWMA speed smoothing state. Only touched by reportStats (single
 	// goroutine), so no lock needed. ewma* fields hold the smoothed
@@ -124,24 +132,43 @@ func (sm *SessionManager) Disconnect() {
 	}
 	sm.running = false
 	cancel := sm.cancel
+	// Extract resources so we can clean them up outside the lock.
+	// Setting them to nil here also prevents the run goroutine's
+	// cleanup from double-cleaning (it will see nil and skip).
+	routeMgr := sm.routeMgr
+	conn := sm.conn
+	dev := sm.dev
+	sm.routeMgr = nil
+	sm.conn = nil
+	sm.dev = nil
+	sm.cidrTracker = nil
 	sm.mu.Unlock()
+
 	if cancel != nil {
 		cancel()
 	}
-	// Close the transport to unblock the WS->TUN goroutine.
-	sm.mu.Lock()
-	conn := sm.conn
-	dev := sm.dev
-	sm.mu.Unlock()
+
+	// CRITICAL: remove routes BEFORE closing the TUN device. If the TUN
+	// is closed first, the /1 cover routes still point at the dead TUN
+	// and all traffic is blackholed until routeMgr.Cleanup() runs -
+	// this causes a brief network outage (browsers, DNS, etc.).
+	if routeMgr != nil {
+		if err := routeMgr.Cleanup(); err != nil {
+			log.L().Error("route cleanup error during disconnect", "error", err)
+		}
+	}
+
+	// Now safe to close the transport and TUN device.
 	if conn != nil {
 		conn.Close()
 	}
-	// Close the TUN device to unblock the TUN->WS goroutine's dev.Read().
 	if dev != nil {
 		dev.Close()
 	}
-	// Wait for the run goroutine to fully exit so that cleanup
-	// (route removal, TUN teardown) is complete before returning.
+
+	// Wait for the run goroutine to fully exit. By now it should be
+	// unblocked (ctx cancelled, conn/dev closed) and will see nil
+	// routeMgr/conn/dev in cleanup, so it won't double-clean.
 	if sm.done != nil {
 		<-sm.done
 	}
@@ -157,6 +184,23 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 			sm.setState(stats.StateDisconnected)
 		}
 	}()
+
+	// Fetch "before-proxy" CIDR lists ONCE before the reconnect loop.
+	// These HTTP requests go through the physical NIC (routes are
+	// clean). The result is reused across reconnection attempts so we
+	// don't re-fetch on every retry. This runs outside the handshake
+	// to avoid consuming the server's 30s ReadyTimeout budget.
+	var beforeCIDRs []string
+	allURLSources := append(append([]model.CIDRURLSource{}, cfg.CIDRV4URLs...), cfg.CIDRV6URLs...)
+	if len(allURLSources) > 0 {
+		log.L().Info("fetching before-proxy CIDR lists", "url_count", len(allURLSources))
+		fetched, err := cidrsource.FetchBeforeProxy(ctx, allURLSources)
+		if err != nil {
+			log.L().Error("fetch before-proxy CIDR lists failed (continuing)", "error", err)
+		}
+		beforeCIDRs = fetched
+		log.L().Info("before-proxy CIDR lists ready", "total_cidrs", len(beforeCIDRs))
+	}
 
 	backoff := time.Second
 	maxBackoff := 60 * time.Second
@@ -176,7 +220,7 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 			targetIP = targets[ipIndex]
 		}
 
-		err := sm.connectOnce(ctx, cfg, targetIP)
+		err := sm.connectOnce(ctx, cfg, targetIP, beforeCIDRs)
 		if ctx.Err() != nil {
 			sm.cleanup()
 			return
@@ -184,6 +228,11 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 
 		if err != nil {
 			log.L().Error("VPN connection failed", "error", err)
+
+			// Safety net: ensure no TUN/routes leak from a failed
+			// attempt. connectOnce should have already cleaned up, but
+			// this guards against any path that returned early.
+			sm.cleanupResources()
 
 			// A TLS certificate verification failure on the original
 			// hostname (ipIndex == 0) is not retryable: the cert won't
@@ -291,7 +340,9 @@ func fatalAuthError(err error) (protocol.AuthErrorCode, string, bool) {
 
 // connectOnce performs a single connection lifecycle: authenticate,
 // handshake, configure TUN, apply routes, pump packets until failure.
-func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, targetIP string) error {
+// beforeCIDRs contains CIDRs pre-fetched from "before" timing URL
+// sources (fetched once in run(), reused across reconnection attempts).
+func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, targetIP string, beforeCIDRs []string) error {
 	sm.setState(stats.StateConnecting)
 
 	// Build URL for this attempt. If targetIP is set (CDN failover),
@@ -330,7 +381,7 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 		if err != nil {
 			return fmt.Errorf("parse server URL: %w", err)
 		}
-		result, err := auth.Login(httpBase, cfg.Username, cfg.Password, tlsCfg)
+		result, err := auth.Login(ctx, httpBase, cfg.Username, cfg.Password, tlsCfg)
 		if err != nil {
 			if cfg.AuthMode == model.AuthModeBoth {
 				// Fall back to password auth.
@@ -352,7 +403,7 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 		Username:  cfg.Username,
 		Password:  cfg.Password,
 		OnInit: func(init protocol.InitMessage) error {
-			return sm.setupTUN(init, cfg)
+			return sm.setupTUN(init, cfg, beforeCIDRs)
 		},
 		TLSConfig: tlsCfg,
 	}
@@ -368,11 +419,19 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 			if errors.As(err, &authErr) ||
 				(errors.As(err, &serverErr) && serverErr.Type == protocol.TypeAuthErr) {
 				log.L().Info("JWT auth failed, falling back to password auth", "error", err)
+				// Clean up any resources created by the failed attempt's
+				// setupTUN before retrying.
+				sm.cleanupResources()
 				handshake.Token = ""
 				conn, err = transport.Connect(ctx, handshake)
 			}
 		}
 		if err != nil {
+			// Clean up TUN/routes if setupTUN ran but the handshake
+			// failed (e.g. server closed the connection after
+			// ReadyTimeout). Without this, leaked /1 cover routes
+			// blackhole all traffic and prevent reconnection.
+			sm.cleanupResources()
 			return err
 		}
 	}
@@ -392,6 +451,11 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 	statsDone := make(chan struct{})
 	go sm.reportStats(statsDone, ctx)
 
+	// Fetch "after-proxy" CIDR lists via the tunnel and dynamically add
+	// their routes. This runs in a goroutine so it doesn't block the
+	// packet pump.
+	go sm.fetchAfterProxyCIDRs(ctx, cfg)
+
 	// Run the packet pump (blocks until connection breaks).
 	sm.pumpPackets(ctx, conn)
 
@@ -402,8 +466,12 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 
 // setupTUN creates and configures the TUN device and applies routes.
 // This is called by the transport during the handshake, between init
-// and ready.
-func (sm *SessionManager) setupTUN(init protocol.InitMessage, cfg SessionConfig) error {
+// and ready. It performs NO network calls (HTTP/DNS) so it completes
+// in milliseconds and never exceeds the server's ReadyTimeout.
+//
+// beforeCIDRs contains CIDRs fetched from "before" timing URL sources,
+// pre-fetched by connectOnce before the handshake began.
+func (sm *SessionManager) setupTUN(init protocol.InitMessage, cfg SessionConfig, beforeCIDRs []string) error {
 	dev, err := tun.Create("")
 	if err != nil {
 		return fmt.Errorf("create tun: %w", err)
@@ -415,12 +483,10 @@ func (sm *SessionManager) setupTUN(init protocol.InitMessage, cfg SessionConfig)
 	localIP := net.ParseIP(init.IP)
 	peerIP := net.ParseIP(init.ServerIP)
 	if localIP == nil || peerIP == nil {
-		dev.Close()
 		return fmt.Errorf("invalid init IPs: %s / %s", init.IP, init.ServerIP)
 	}
 
 	if err := dev.Configure(localIP, init.Prefix, peerIP); err != nil {
-		dev.Close()
 		return fmt.Errorf("configure tun: %w", err)
 	}
 
@@ -429,11 +495,9 @@ func (sm *SessionManager) setupTUN(init protocol.InitMessage, cfg SessionConfig)
 	if hasV6 {
 		ip6 := net.ParseIP(init.IP6)
 		if ip6 == nil {
-			dev.Close()
 			return fmt.Errorf("invalid init IPv6: %s", init.IP6)
 		}
 		if err := dev.ConfigureIPv6(ip6, init.Prefix6); err != nil {
-			dev.Close()
 			return fmt.Errorf("configure tun ipv6: %w", err)
 		}
 	}
@@ -443,9 +507,14 @@ func (sm *SessionManager) setupTUN(init protocol.InitMessage, cfg SessionConfig)
 		mtu = cfg.MTUOverride
 	}
 	if err := dev.SetMTU(mtu); err != nil {
-		dev.Close()
 		return fmt.Errorf("set mtu: %w", err)
 	}
+
+	// Merge static CIDRs with pre-fetched before-proxy CIDRs.
+	var cidrs []string
+	cidrs = append(cidrs, cfg.CIDRV4...)
+	cidrs = append(cidrs, cfg.CIDRV6...)
+	cidrs = append(cidrs, beforeCIDRs...)
 
 	// Apply routing.
 	routeCfg := route.Config{
@@ -456,17 +525,71 @@ func (sm *SessionManager) setupTUN(init protocol.InitMessage, cfg SessionConfig)
 		VPNIP6:        init.IP6,
 		VPNPrefix6:    init.Prefix6,
 		ServerHost:    serverHostFromURL(cfg.ServerURL),
-		CustomCIDRs:   cfg.CustomCIDRs,
+		CIDRs:         cidrs,
 	}
 	sm.routeMgr = route.NewManager(routeCfg)
 	if err := sm.routeMgr.Apply(); err != nil {
 		log.L().Error("route apply failed (continuing)", "error", err)
 	}
 
+	// Initialise the CIDR hit tracker for proxy/bypass modes.
+	sm.cidrTracker = newCIDRTracker(cfg.RoutingMode, cidrs)
+
+	// Log CIDR breakdown by family for diagnostics.
+	v4Total, _, v6Total, _ := sm.cidrTracker.Stats()
 	log.L().Info("TUN configured",
 		"dev", dev.Name(), "ip", init.IP, "prefix", init.Prefix,
-		"ip6", init.IP6, "prefix6", init.Prefix6, "mtu", mtu)
+		"ip6", init.IP6, "prefix6", init.Prefix6, "mtu", mtu,
+		"routing_mode", cfg.RoutingMode,
+		"cidr_v4", v4Total, "cidr_v6", v6Total,
+		"before_proxy_cidrs", len(beforeCIDRs))
 	return nil
+}
+
+// fetchAfterProxyCIDRs fetches CIDR lists from URLs with "after" timing
+// (via the tunnel) and dynamically adds their routes to the route
+// manager. This is called in a goroutine after the data plane is up.
+func (sm *SessionManager) fetchAfterProxyCIDRs(ctx context.Context, cfg SessionConfig) {
+	allURLSources := append(append([]model.CIDRURLSource{}, cfg.CIDRV4URLs...), cfg.CIDRV6URLs...)
+	// Count only "after" sources for logging.
+	afterCount := 0
+	for _, s := range allURLSources {
+		if s.FetchTiming == model.FetchAfter {
+			afterCount++
+		}
+	}
+	if afterCount == 0 {
+		return
+	}
+
+	log.L().Info("fetching after-proxy CIDR lists", "url_count", afterCount)
+	fetched, err := cidrsource.FetchAfterProxy(ctx, allURLSources)
+	if err != nil {
+		log.L().Error("fetch after-proxy CIDR lists completed with errors", "error", err)
+	}
+	if len(fetched) == 0 {
+		return
+	}
+
+	sm.mu.Lock()
+	mgr := sm.routeMgr
+	sm.mu.Unlock()
+	if mgr == nil {
+		return
+	}
+
+	if err := mgr.AddRoutes(fetched); err != nil {
+		log.L().Error("add after-proxy routes failed (continuing)", "error", err)
+	} else {
+		log.L().Info("added after-proxy routes", "count", len(fetched))
+	}
+
+	sm.mu.Lock()
+	tracker := sm.cidrTracker
+	sm.mu.Unlock()
+	if tracker != nil {
+		tracker.AddCIDRs(fetched)
+	}
 }
 
 // pumpPackets runs the bidirectional packet loop until the connection
@@ -479,6 +602,12 @@ func (sm *SessionManager) pumpPackets(ctx context.Context, conn *transport.Conn)
 	go func() {
 		defer wg.Done()
 		buf := make([]byte, 65536)
+		// Cache the cidrTracker pointer once; it is stable for the
+		// lifetime of pumpPackets (set in setupTUN, cleared in cleanup
+		// which only runs after pumpPackets returns).
+		sm.mu.Lock()
+		tracker := sm.cidrTracker
+		sm.mu.Unlock()
 		for {
 			select {
 			case <-ctx.Done():
@@ -503,6 +632,9 @@ func (sm *SessionManager) pumpPackets(ctx context.Context, conn *transport.Conn)
 				return
 			}
 			sm.stats.AddTx(buf[:n])
+			if tracker != nil {
+				tracker.Record(buf[:n])
+			}
 		}
 	}()
 
@@ -536,8 +668,12 @@ func (sm *SessionManager) pumpPackets(ctx context.Context, conn *transport.Conn)
 	wg.Wait()
 }
 
-// cleanup tears down the TUN device and routes.
-func (sm *SessionManager) cleanup() {
+// cleanupResources tears down the TUN device, routes, and transport
+// connection WITHOUT changing the session state. This is used on
+// handshake-failure paths where the caller will set the appropriate
+// state (e.g. StateReconnecting). Returns without error if nothing
+// was set up.
+func (sm *SessionManager) cleanupResources() {
 	sm.mu.Lock()
 	dev := sm.dev
 	routeMgr := sm.routeMgr
@@ -545,6 +681,7 @@ func (sm *SessionManager) cleanup() {
 	sm.dev = nil
 	sm.routeMgr = nil
 	sm.conn = nil
+	sm.cidrTracker = nil
 	sm.mu.Unlock()
 
 	if routeMgr != nil {
@@ -558,6 +695,12 @@ func (sm *SessionManager) cleanup() {
 	if conn != nil {
 		conn.Close()
 	}
+}
+
+// cleanup tears down the TUN device, routes, and transport, then marks
+// the session as disconnected. Used on normal session termination.
+func (sm *SessionManager) cleanup() {
+	sm.cleanupResources()
 	sm.stats.SetDisconnected()
 }
 
@@ -647,6 +790,20 @@ func (sm *SessionManager) reportStats(done <-chan struct{}, ctx context.Context)
 			sm.prevSnap.RxSpeed, sm.prevSnap.TxSpeed = 0, 0
 			sm.prevTick = now
 			sm.speedReady = true
+
+			// Fill in CIDR hit statistics.
+			sm.mu.Lock()
+			tracker := sm.cidrTracker
+			sm.mu.Unlock()
+			if tracker != nil {
+				v4Total, v4Hits, v6Total, v6Hits := tracker.Stats()
+				snap.RoutingMode = string(tracker.mode)
+				snap.CIDRV4Total = v4Total
+				snap.CIDRV4Hits = v4Hits
+				snap.CIDRV6Total = v6Total
+				snap.CIDRV6Hits = v6Hits
+			}
+
 			sm.onStats(snap)
 		}
 	}
@@ -706,4 +863,176 @@ func replaceHost(rawURL, newHost string) string {
 		}
 	}
 	return rawURL
+}
+
+// cidrTracker tracks which configured CIDRs have been "hit" by
+// outbound traffic (TUN -> WebSocket). The behaviour differs by mode:
+//
+//   - Proxy mode: each outbound packet's destination IP is matched
+//     against the CIDR list; the first matching CIDR is marked as hit.
+//     Stats() returns the count of hit CIDRs vs total CIDRs.
+//   - Bypass mode: outbound traffic through TUN is, by definition,
+//     traffic that did NOT match any bypass CIDR (bypassed traffic
+//     goes via the physical NIC). We count distinct destination
+//     /24 (v4) or /48 (v6) prefixes seen on TUN as "unmatched
+//     destinations". Stats() returns the total bypass CIDR count
+//     and the unmatched destination count.
+type cidrTracker struct {
+	mode route.Mode
+	mu   sync.RWMutex
+
+	// Proxy mode: pre-parsed CIDR nets + per-CIDR hit flags.
+	// Protected by mu for concurrent AddCIDRs (write) vs Record/Stats
+	// (read). The atomic.Bool hit flags are individually atomic, but
+	// the slices themselves need the lock.
+	v4CIDRs []*net.IPNet
+	v6CIDRs []*net.IPNet
+	v4Hits  []atomic.Bool
+	v6Hits  []atomic.Bool
+
+	// Bypass mode: distinct destination prefix sets.
+	// v4 key = first 3 bytes of dest IP (a /24 prefix).
+	// v6 key = first 6 bytes of dest IP (a /48 prefix).
+	// sync.Map is already goroutine-safe; no lock needed.
+	v4Prefixes sync.Map
+	v6Prefixes sync.Map
+	v4Count    atomic.Int64
+	v6Count    atomic.Int64
+}
+
+// newCIDRTracker creates a tracker for the given routing mode and CIDR
+// list. For full-tunnel mode, a tracker is still created but will
+// report zero totals (no CIDRs configured).
+func newCIDRTracker(mode route.Mode, cidrs []string) *cidrTracker {
+	t := &cidrTracker{mode: mode}
+	if mode == route.ModeFull {
+		return t
+	}
+	t.addCIDRs(cidrs)
+	return t
+}
+
+// AddCIDRs appends additional CIDRs to the tracker (used for
+// after-proxy fetched CIDRs). Existing hit flags are preserved.
+func (t *cidrTracker) AddCIDRs(cidrs []string) {
+	t.addCIDRs(cidrs)
+}
+
+func (t *cidrTracker) addCIDRs(cidrs []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, cidrStr := range cidrs {
+		cidrStr = strings.TrimSpace(cidrStr)
+		if cidrStr == "" {
+			continue
+		}
+		_, ipNet, err := net.ParseCIDR(cidrStr)
+		if err != nil {
+			continue
+		}
+		if ipNet.IP.To4() != nil {
+			t.v4CIDRs = append(t.v4CIDRs, ipNet)
+			t.v4Hits = append(t.v4Hits, atomic.Bool{})
+		} else {
+			t.v6CIDRs = append(t.v6CIDRs, ipNet)
+			t.v6Hits = append(t.v6Hits, atomic.Bool{})
+		}
+	}
+}
+
+// Record inspects an outbound IP packet (from TUN) and updates hit
+// counters. It is called from the TUN -> WebSocket goroutine for every
+// packet. Packets too short to contain an IP header or with an unknown
+// version are silently ignored.
+func (t *cidrTracker) Record(p []byte) {
+	if len(p) < 1 {
+		return
+	}
+	switch p[0] >> 4 {
+	case 4:
+		if len(p) < 20 {
+			return
+		}
+		dst := net.IP(p[16:20])
+		t.recordV4(dst)
+	case 6:
+		if len(p) < 40 {
+			return
+		}
+		dst := net.IP(p[24:40])
+		t.recordV6(dst)
+	}
+}
+
+func (t *cidrTracker) recordV4(dst net.IP) {
+	switch t.mode {
+	case route.ModeProxy:
+		t.mu.RLock()
+		defer t.mu.RUnlock()
+		for i, cidr := range t.v4CIDRs {
+			if !t.v4Hits[i].Load() && cidr.Contains(dst) {
+				t.v4Hits[i].Store(true)
+			}
+		}
+	case route.ModeBypass:
+		key := string(dst.To4()[:3])
+		if _, loaded := t.v4Prefixes.LoadOrStore(key, struct{}{}); !loaded {
+			t.v4Count.Add(1)
+		}
+	}
+}
+
+func (t *cidrTracker) recordV6(dst net.IP) {
+	switch t.mode {
+	case route.ModeProxy:
+		t.mu.RLock()
+		defer t.mu.RUnlock()
+		for i, cidr := range t.v6CIDRs {
+			if !t.v6Hits[i].Load() && cidr.Contains(dst) {
+				t.v6Hits[i].Store(true)
+			}
+		}
+	case route.ModeBypass:
+		v6 := dst.To16()
+		if len(v6) < 6 {
+			return
+		}
+		key := string(v6[:6])
+		if _, loaded := t.v6Prefixes.LoadOrStore(key, struct{}{}); !loaded {
+			t.v6Count.Add(1)
+		}
+	}
+}
+
+// Stats returns the total and hit counts for IPv4 and IPv6 CIDRs.
+//
+// For proxy mode: "hits" = number of CIDRs that have been matched by
+// at least one outbound packet.
+// For bypass mode: "hits" = number of distinct destination prefixes
+// seen on TUN (i.e. unmatched destinations that went through the
+// tunnel because they didn't match any bypass CIDR).
+func (t *cidrTracker) Stats() (v4Total, v4Hits, v6Total, v6Hits int) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	switch t.mode {
+	case route.ModeProxy:
+		v4Total = len(t.v4CIDRs)
+		for i := range t.v4Hits {
+			if t.v4Hits[i].Load() {
+				v4Hits++
+			}
+		}
+		v6Total = len(t.v6CIDRs)
+		for i := range t.v6Hits {
+			if t.v6Hits[i].Load() {
+				v6Hits++
+			}
+		}
+	case route.ModeBypass:
+		v4Total = len(t.v4CIDRs)
+		v4Hits = int(t.v4Count.Load())
+		v6Total = len(t.v6CIDRs)
+		v6Hits = int(t.v6Count.Load())
+	}
+	return
 }

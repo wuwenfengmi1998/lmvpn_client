@@ -2,12 +2,14 @@ package ui
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"time"
 
 	"lmvpn/internal/i18n"
 	"lmvpn/internal/ipc"
+	"lmvpn/internal/model"
 	"lmvpn/internal/stats"
 
 	"fyne.io/fyne/v2"
@@ -69,6 +71,12 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 	a.txV6Label = widget.NewLabel(i18n.T("TxV6Zero"))
 	a.rxTotalLabel = widget.NewLabel(i18n.T("RxTotalZero"))
 	a.txTotalLabel = widget.NewLabel(i18n.T("TxTotalZero"))
+	a.routingModeLabel = widget.NewLabel("")
+	a.routingModeLabel.Hide()
+	a.cidrV4Label = widget.NewLabel("")
+	a.cidrV4Label.Hide()
+	a.cidrV6Label = widget.NewLabel("")
+	a.cidrV6Label.Hide()
 
 	statusCard := widget.NewCard(i18n.T("StatusLabel"), "", container.NewVBox(
 		a.stateLabel,
@@ -78,6 +86,9 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 		container.NewHBox(a.rxV4Label, a.txV4Label),
 		container.NewHBox(a.rxV6Label, a.txV6Label),
 		container.NewHBox(a.rxTotalLabel, a.txTotalLabel),
+		a.routingModeLabel,
+		a.cidrV4Label,
+		a.cidrV6Label,
 	))
 
 	// Buttons.
@@ -144,7 +155,12 @@ func (a *App) onConnect() {
 		a.ipcClient = client
 		a.mu.Unlock()
 		if oldClient != nil {
-			_ = ipc.SendStop(oldClient)
+			// Do NOT send SendStop on the old connection. The daemon's
+			// startSession already calls stopSessionLocked() which
+			// tears down any existing session. Sending SendStop here
+			// races with SendStart on the new connection - the daemon
+			// processes each IPC connection in a separate goroutine,
+			// so a late SendStop could kill the newly started session.
 			oldClient.Close()
 		}
 
@@ -178,7 +194,10 @@ func (a *App) onConnect() {
 			Password:      password,
 			AuthMode:      string(p.AuthMode),
 			RoutingMode:   string(p.RoutingMode),
-			CustomCIDRs:   splitCIDRs(p.CustomCIDRs),
+			CIDRV4:        model.SplitCIDRs(p.CIDRV4),
+			CIDRV6:        model.SplitCIDRs(p.CIDRV6),
+			CIDRV4URLs:    parseIPCCIDRURLs(p.CIDRV4URLs),
+			CIDRV6URLs:    parseIPCCIDRURLs(p.CIDRV6URLs),
 			MTUOverride:   p.MTUOverride,
 			TLSCACert:     p.TLSCACert,
 			TLSCAPath:     p.TLSCAPath,
@@ -221,6 +240,9 @@ func (a *App) onDisconnect() {
 	a.txV6Label.SetText(i18n.T("TxV6Zero"))
 	a.rxTotalLabel.SetText(i18n.T("RxTotalZero"))
 	a.txTotalLabel.SetText(i18n.T("TxTotalZero"))
+	a.routingModeLabel.Hide()
+	a.cidrV4Label.Hide()
+	a.cidrV6Label.Hide()
 }
 
 // eventLoop reads IPC events from the daemon and updates the UI.
@@ -250,6 +272,9 @@ func (a *App) eventLoop() {
 					a.txV6Label.SetText(i18n.T("TxV6Zero"))
 					a.rxTotalLabel.SetText(i18n.T("RxTotalZero"))
 					a.txTotalLabel.SetText(i18n.T("TxTotalZero"))
+					a.routingModeLabel.Hide()
+					a.cidrV4Label.Hide()
+					a.cidrV6Label.Hide()
 					a.setConnButtons(true, false)
 				}
 			})
@@ -376,6 +401,53 @@ func (a *App) applyStats(s stats.Snapshot) {
 	if s.Uptime > 0 {
 		a.uptimeLabel.SetText(i18n.T("UptimeLabel", map[string]interface{}{"uptime": formatDuration(s.Uptime)}))
 	}
+
+	// Routing mode + CIDR hit statistics.
+	if s.RoutingMode != "" {
+		modeLabel := routeModeLabel(s.RoutingMode)
+		a.routingModeLabel.SetText(i18n.T("StatusRoutingMode", map[string]interface{}{"mode": modeLabel}))
+		a.routingModeLabel.Show()
+		switch s.RoutingMode {
+		case "proxy":
+			a.cidrV4Label.SetText(fmt.Sprintf("IPv4 CIDR: %d/%d %s",
+				s.CIDRV4Hits, s.CIDRV4Total, i18n.T("CIDRHit")))
+			a.cidrV6Label.SetText(fmt.Sprintf("IPv6 CIDR: %d/%d %s",
+				s.CIDRV6Hits, s.CIDRV6Total, i18n.T("CIDRHit")))
+			a.cidrV4Label.Show()
+			a.cidrV6Label.Show()
+		case "bypass":
+			a.cidrV4Label.SetText(fmt.Sprintf("IPv4 CIDR: %d %s | %s: %d %s",
+				s.CIDRV4Total, i18n.T("CIDRConfigured"),
+				i18n.T("CIDRUnmatched"), s.CIDRV4Hits, i18n.T("CIDRDestinations")))
+			a.cidrV6Label.SetText(fmt.Sprintf("IPv6 CIDR: %d %s | %s: %d %s",
+				s.CIDRV6Total, i18n.T("CIDRConfigured"),
+				i18n.T("CIDRUnmatched"), s.CIDRV6Hits, i18n.T("CIDRDestinations")))
+			a.cidrV4Label.Show()
+			a.cidrV6Label.Show()
+		default:
+			a.cidrV4Label.Hide()
+			a.cidrV6Label.Hide()
+		}
+	} else {
+		a.routingModeLabel.Hide()
+		a.cidrV4Label.Hide()
+		a.cidrV6Label.Hide()
+	}
+}
+
+// routeModeLabel returns the localised display name for a routing mode
+// code string.
+func routeModeLabel(code string) string {
+	switch code {
+	case "full":
+		return i18n.T("RoutingModeFull")
+	case "proxy":
+		return i18n.T("RoutingModeProxy")
+	case "bypass":
+		return i18n.T("RoutingModeBypass")
+	default:
+		return code
+	}
 }
 
 // formatBytes formats a byte count human-readably.
@@ -424,20 +496,32 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%ds", s)
 }
 
-// splitCIDRs splits a comma-separated CIDR string into a slice.
-func splitCIDRs(s string) []string {
-	if s == "" {
+// parseIPCCIDRURLs decodes a JSON-encoded model.CIDRURLSource array
+// from the profile string and converts it to the IPC wire type.
+func parseIPCCIDRURLs(jsonStr string) []ipc.CIDRURLSource {
+	sources := model.ParseCIDRURLs(jsonStr)
+	if len(sources) == 0 {
 		return nil
 	}
-	var out []string
-	start := 0
-	for i := 0; i <= len(s); i++ {
-		if i == len(s) || s[i] == ',' {
-			if i > start {
-				out = append(out, s[start:i])
-			}
-			start = i + 1
+	out := make([]ipc.CIDRURLSource, len(sources))
+	for i, s := range sources {
+		out[i] = ipc.CIDRURLSource{
+			URL:         s.URL,
+			FetchTiming: string(s.FetchTiming),
 		}
 	}
 	return out
+}
+
+// marshalCIDRURLs encodes a slice of CIDRURLSource to a JSON string
+// for storage in the database.
+func marshalCIDRURLs(sources []model.CIDRURLSource) string {
+	if len(sources) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(sources)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }

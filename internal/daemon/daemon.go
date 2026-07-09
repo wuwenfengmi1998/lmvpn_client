@@ -128,8 +128,8 @@ func (d *daemon) handle(conn net.Conn, req ipc.Request) {
 
 func (d *daemon) startSession(conn net.Conn, req ipc.Request) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if req.Config == nil {
+		d.mu.Unlock()
 		_ = ipc.WriteErr(conn, "missing config")
 		return
 	}
@@ -146,7 +146,10 @@ func (d *daemon) startSession(conn net.Conn, req ipc.Request) {
 		Token:         req.Config.Token,
 		AuthMode:      model.AuthMode(req.Config.AuthMode),
 		RoutingMode:   ipc.RoutingModeFromIPC(req.Config.RoutingMode),
-		CustomCIDRs:   req.Config.CustomCIDRs,
+		CIDRV4:        req.Config.CIDRV4,
+		CIDRV6:        req.Config.CIDRV6,
+		CIDRV4URLs:    convertIPCSources(req.Config.CIDRV4URLs),
+		CIDRV6URLs:    convertIPCSources(req.Config.CIDRV6URLs),
 		MTUOverride:   req.Config.MTUOverride,
 		TLSCACert:     req.Config.TLSCACert,
 		TLSCAPath:     req.Config.TLSCAPath,
@@ -168,10 +171,18 @@ func (d *daemon) startSession(conn net.Conn, req ipc.Request) {
 			d.server.Broadcast(ipc.Event{Event: ipc.EvError, Code: code, Message: msg})
 		},
 	)
+	// Release the lock before Connect. Connect is non-blocking (it
+	// starts a goroutine), but holding the lock across it would
+	// serialize all IPC commands (CmdStats, CmdStop, etc.) behind the
+	// session startup.
+	d.mu.Unlock()
 
 	if err := d.session.Connect(ctx, cfg); err != nil {
 		_ = ipc.WriteErr(conn, "connect: "+err.Error())
+		d.mu.Lock()
 		d.session = nil
+		d.cancel = nil
+		d.mu.Unlock()
 		return
 	}
 }
@@ -191,4 +202,19 @@ func (d *daemon) stopSessionLocked() {
 		d.session.Disconnect()
 		d.session = nil
 	}
+}
+
+// convertIPCSources converts IPC CIDRURLSource values to model.CIDRURLSource.
+func convertIPCSources(srcs []ipc.CIDRURLSource) []model.CIDRURLSource {
+	if len(srcs) == 0 {
+		return nil
+	}
+	out := make([]model.CIDRURLSource, len(srcs))
+	for i, s := range srcs {
+		out[i] = model.CIDRURLSource{
+			URL:         s.URL,
+			FetchTiming: model.FetchTiming(s.FetchTiming),
+		}
+	}
+	return out
 }

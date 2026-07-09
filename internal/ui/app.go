@@ -46,6 +46,9 @@ type App struct {
 	txV6Label     *widget.Label
 	rxTotalLabel  *widget.Label
 	txTotalLabel  *widget.Label
+	routingModeLabel *widget.Label
+	cidrV4Label      *widget.Label
+	cidrV6Label      *widget.Label
 	connectBtn    *widget.Button
 	disconnectBtn *widget.Button
 

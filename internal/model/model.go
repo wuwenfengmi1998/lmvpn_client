@@ -3,6 +3,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
@@ -22,10 +23,25 @@ const (
 type RoutingMode string
 
 const (
-	RoutingFull   RoutingMode = "full"   // 0.0.0.0/0 via tunnel
-	RoutingSplit  RoutingMode = "split"  // only VPN subnet via tunnel
-	RoutingCustom RoutingMode = "custom" // user-specified CIDRs
+	RoutingFull   RoutingMode = "full"   // 全隧道: all traffic via tunnel
+	RoutingProxy  RoutingMode = "proxy"  // 代理CIDR: only specified CIDRs via tunnel
+	RoutingBypass RoutingMode = "bypass" // 绕过CIDR: all traffic via tunnel except specified CIDRs
 )
+
+// FetchTiming specifies when a CIDR URL source is fetched.
+type FetchTiming string
+
+const (
+	FetchBefore FetchTiming = "before" // before proxy: fetched via direct connection before routing is applied
+	FetchAfter  FetchTiming = "after"  // after proxy: fetched via the tunnel after the data plane is up
+)
+
+// CIDRURLSource describes a URL that provides a CIDR list. The list
+// is fetched at FetchTiming and merged into the routing configuration.
+type CIDRURLSource struct {
+	URL         string      `json:"url"`
+	FetchTiming FetchTiming `json:"fetch_timing"` // "before" or "after"
+}
 
 // ServerProfile is a saved VPN server configuration.
 type ServerProfile struct {
@@ -39,7 +55,10 @@ type ServerProfile struct {
 	Username        string      `json:"username"`
 	AuthMode        AuthMode    `json:"auth_mode"`
 	RoutingMode     RoutingMode `json:"routing_mode"`
-	CustomCIDRs     string      `json:"custom_cidrs"` // comma-separated, for RoutingCustom
+	CIDRV4          string      `json:"cidr_v4"`      // comma-separated static IPv4 CIDRs
+	CIDRV6          string      `json:"cidr_v6"`      // comma-separated static IPv6 CIDRs
+	CIDRV4URLs      string      `json:"cidr_v4_urls"` // JSON array of CIDRURLSource for IPv4
+	CIDRV6URLs      string      `json:"cidr_v6_urls"` // JSON array of CIDRURLSource for IPv6
 	MTUOverride     int         `json:"mtu_override"` // 0 = use server MTU
 	AutoConnect     bool        `json:"auto_connect"`
 	TLSCACert       string      `json:"tls_ca_cert"`      // inline CA certificate PEM (wss only)
@@ -111,6 +130,35 @@ func (p *ServerProfile) ValidateServerIPs() (valid []string, invalid []string) {
 func (p *ServerProfile) GetServerIPList() []string {
 	valid, _ := p.ValidateServerIPs()
 	return valid
+}
+
+// ParseCIDRURLs decodes a JSON-encoded CIDRURLSource array. Returns an
+// empty slice if the string is empty or unparseable.
+func ParseCIDRURLs(jsonStr string) []CIDRURLSource {
+	if jsonStr == "" {
+		return nil
+	}
+	var sources []CIDRURLSource
+	if err := json.Unmarshal([]byte(jsonStr), &sources); err != nil {
+		return nil
+	}
+	return sources
+}
+
+// SplitCIDRs splits a comma-separated CIDR string into a slice,
+// trimming whitespace from each entry and skipping empty ones.
+func SplitCIDRs(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		c := strings.TrimSpace(part)
+		if c != "" {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // ConnectionStatus records the outcome of a connection attempt.

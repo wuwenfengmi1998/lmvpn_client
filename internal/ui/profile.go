@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -19,9 +20,11 @@ import (
 // mapped back to the codes stored in the database.
 var (
 	authCodes  = []string{string(model.AuthModeBoth), string(model.AuthModeJWT), string(model.AuthModePassword)}
-	routeCodes = []string{string(model.RoutingFull), string(model.RoutingSplit), string(model.RoutingCustom)}
+	routeCodes = []string{string(model.RoutingFull), string(model.RoutingProxy), string(model.RoutingBypass)}
 
 	protoCodes = []string{"wss", "ws"}
+
+	fetchTimingCodes = []string{string(model.FetchBefore), string(model.FetchAfter)}
 )
 
 func authModeLabels() []string {
@@ -29,11 +32,15 @@ func authModeLabels() []string {
 }
 
 func routeModeLabels() []string {
-	return []string{i18n.T("RoutingModeFull"), i18n.T("RoutingModeSplit"), i18n.T("RoutingModeCustom")}
+	return []string{i18n.T("RoutingModeFull"), i18n.T("RoutingModeProxy"), i18n.T("RoutingModeBypass")}
 }
 
 func protoLabels() []string {
 	return []string{"wss", "ws"}
+}
+
+func fetchTimingLabels() []string {
+	return []string{i18n.T("FetchTimingBefore"), i18n.T("FetchTimingAfter")}
 }
 
 // codeIndex returns the position of code in codes, or 0 if not found.
@@ -52,6 +59,100 @@ func selectedCode(codes []string, idx int) string {
 		return codes[0]
 	}
 	return codes[idx]
+}
+
+// urlEntryRow holds the widgets for a single CIDR URL source row.
+type urlEntryRow struct {
+	urlEntry    *widget.Entry
+	timingSelect *widget.Select
+	container   *fyne.Container
+}
+
+// cidrURLList manages a dynamic list of CIDR URL source rows.
+type cidrURLList struct {
+	rows   []*urlEntryRow
+	container *fyne.Container
+	parent    fyne.Window
+}
+
+func newCIDRURLList(parent fyne.Window) *cidrURLList {
+	cl := &cidrURLList{
+		container: container.NewVBox(),
+		parent:    parent,
+	}
+	return cl
+}
+
+func (cl *cidrURLList) addRow(url string, timingIdx int) {
+	urlEntry := widget.NewEntry()
+	urlEntry.Wrapping = fyne.TextWrapOff
+	urlEntry.Scroll = container.ScrollHorizontalOnly
+	urlEntry.SetPlaceHolder(i18n.T("PlaceholderCIDRURL"))
+	urlEntry.SetText(url)
+
+	timingSelect := widget.NewSelect(fetchTimingLabels(), nil)
+	if timingIdx >= 0 && timingIdx < len(fetchTimingCodes) {
+		timingSelect.SetSelectedIndex(timingIdx)
+	} else {
+		timingSelect.SetSelectedIndex(0)
+	}
+
+	row := &urlEntryRow{
+		urlEntry:     urlEntry,
+		timingSelect: timingSelect,
+	}
+
+	removeBtn := widget.NewButton(i18n.T("BtnRemoveURL"), func() {
+		cl.removeRow(row)
+	})
+
+	row.container = container.NewBorder(nil, nil, nil, removeBtn,
+		container.NewVBox(urlEntry, timingSelect))
+
+	cl.rows = append(cl.rows, row)
+	cl.container.Add(row.container)
+}
+
+func (cl *cidrURLList) removeRow(row *urlEntryRow) {
+	for i, r := range cl.rows {
+		if r == row {
+			cl.rows = append(cl.rows[:i], cl.rows[i+1:]...)
+			cl.container.Remove(row.container)
+			break
+		}
+	}
+}
+
+func (cl *cidrURLList) loadFromJSON(jsonStr string) {
+	for _, r := range cl.rows {
+		cl.container.Remove(r.container)
+	}
+	cl.rows = nil
+
+	sources := model.ParseCIDRURLs(jsonStr)
+	for _, s := range sources {
+		timingIdx := codeIndex(fetchTimingCodes, string(s.FetchTiming))
+		cl.addRow(s.URL, timingIdx)
+	}
+}
+
+func (cl *cidrURLList) toSources() []model.CIDRURLSource {
+	var sources []model.CIDRURLSource
+	for _, r := range cl.rows {
+		url := strings.TrimSpace(r.urlEntry.Text)
+		if url == "" {
+			continue
+		}
+		sources = append(sources, model.CIDRURLSource{
+			URL:         url,
+			FetchTiming: model.FetchTiming(selectedCode(fetchTimingCodes, r.timingSelect.SelectedIndex())),
+		})
+	}
+	return sources
+}
+
+func (cl *cidrURLList) toJSON() string {
+	return marshalCIDRURLs(cl.toSources())
 }
 
 // showProfileDialog opens a separate window for editing a server profile.
@@ -98,11 +199,17 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 	authSelect := widget.NewSelect(authModeLabels(), nil)
 	routeSelect := widget.NewSelect(routeModeLabels(), nil)
 
-	cidrEntry := widget.NewMultiLineEntry()
-	cidrEntry.Wrapping = fyne.TextWrapOff
-	cidrEntry.Scroll = container.ScrollNone
-	cidrEntry.SetMinRowsVisible(4)
-	cidrEntry.SetPlaceHolder(i18n.T("PlaceholderCIDRs"))
+	cidrV4Entry := widget.NewMultiLineEntry()
+	cidrV4Entry.Wrapping = fyne.TextWrapOff
+	cidrV4Entry.Scroll = container.ScrollNone
+	cidrV4Entry.SetMinRowsVisible(3)
+	cidrV4Entry.SetPlaceHolder(i18n.T("PlaceholderCIDRV4"))
+
+	cidrV6Entry := widget.NewMultiLineEntry()
+	cidrV6Entry.Wrapping = fyne.TextWrapOff
+	cidrV6Entry.Scroll = container.ScrollNone
+	cidrV6Entry.SetMinRowsVisible(3)
+	cidrV6Entry.SetPlaceHolder(i18n.T("PlaceholderCIDRV6"))
 
 	mtuEntry := widget.NewEntry()
 	mtuEntry.Wrapping = fyne.TextWrapOff
@@ -155,6 +262,32 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 		}
 	}
 
+	// CIDR URL lists for IPv4 and IPv6.
+	v4URLList := newCIDRURLList(profileWin)
+	v6URLList := newCIDRURLList(profileWin)
+
+	v4AddURLBtn := widget.NewButton(i18n.T("BtnAddURL"), func() {
+		v4URLList.addRow("", 0)
+	})
+	v6AddURLBtn := widget.NewButton(i18n.T("BtnAddURL"), func() {
+		v6URLList.addRow("", 0)
+	})
+
+	// CIDR section visibility: hide when routing mode is "full".
+	cidrV4EntryBox := container.NewVBox(widget.NewLabel(i18n.T("FieldCIDRV4")), cidrV4Entry)
+	cidrV6EntryBox := container.NewVBox(widget.NewLabel(i18n.T("FieldCIDRV6")), cidrV6Entry)
+	v4URLBox := container.NewVBox(widget.NewLabel(i18n.T("FieldCIDRV4URLs")), v4URLList.container, v4AddURLBtn)
+	v6URLBox := container.NewVBox(widget.NewLabel(i18n.T("FieldCIDRV6URLs")), v6URLList.container, v6AddURLBtn)
+	cidrSection := container.NewVBox(cidrV4EntryBox, cidrV6EntryBox, v4URLBox, v6URLBox)
+
+	setCIDRVisible := func(mode string) {
+		if mode == string(model.RoutingFull) {
+			cidrSection.Hide()
+		} else {
+			cidrSection.Show()
+		}
+	}
+
 	if !isNew {
 		nameEntry.SetText(editing.Name)
 		protoSelect.SetSelectedIndex(codeIndex(protoCodes, editing.Protocol))
@@ -167,7 +300,10 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 		userEntry.SetText(editing.Username)
 		authSelect.SetSelectedIndex(codeIndex(authCodes, string(editing.AuthMode)))
 		routeSelect.SetSelectedIndex(codeIndex(routeCodes, string(editing.RoutingMode)))
-		cidrEntry.SetText(editing.CustomCIDRs)
+		cidrV4Entry.SetText(editing.CIDRV4)
+		cidrV6Entry.SetText(editing.CIDRV6)
+		v4URLList.loadFromJSON(editing.CIDRV4URLs)
+		v6URLList.loadFromJSON(editing.CIDRV6URLs)
 		mtuEntry.SetText(fmtInt(editing.MTUOverride))
 		tlsCaPEMEntry.SetText(editing.TLSCACert)
 		tlsCaPathEntry.SetText(editing.TLSCAPath)
@@ -187,6 +323,11 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 		setTLSEnabled(value == "wss")
 	}
 	setTLSEnabled(selectedCode(protoCodes, protoSelect.SelectedIndex()) == "wss")
+
+	routeSelect.OnChanged = func(_ string) {
+		setCIDRVisible(selectedCode(routeCodes, routeSelect.SelectedIndex()))
+	}
+	setCIDRVisible(selectedCode(routeCodes, routeSelect.SelectedIndex()))
 
 	form := container.NewVBox(
 		widget.NewLabel(i18n.T("FieldName")),
@@ -213,7 +354,8 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 			container.NewVBox(widget.NewLabel(i18n.T("FieldRoutingMode")), routeSelect),
 		),
 
-		widget.NewLabel(i18n.T("FieldCustomCIDRs")), cidrEntry,
+		cidrSection,
+
 		widget.NewLabel(i18n.T("FieldMTUOverride")), mtuEntry,
 
 		widget.NewLabel(i18n.T("FieldTLS")),
@@ -230,6 +372,10 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 	profileWin = a.fyneApp.NewWindow(i18n.T("DlgProfileTitle"))
 	a.profileWindow = profileWin
 
+	// Update parent references now that the window exists.
+	v4URLList.parent = profileWin
+	v6URLList.parent = profileWin
+
 	profileWin.SetOnClosed(func() {
 		a.profileWindow = nil
 	})
@@ -243,7 +389,9 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 			userEntry.Text, passEntry.Text,
 			selectedCode(authCodes, authSelect.SelectedIndex()),
 			selectedCode(routeCodes, routeSelect.SelectedIndex()),
-			cidrEntry.Text, mtuEntry.Text,
+			cidrV4Entry.Text, cidrV6Entry.Text,
+			v4URLList.toJSON(), v6URLList.toJSON(),
+			mtuEntry.Text,
 			tlsCaPEMEntry.Text, tlsCaPathEntry.Text,
 			tlsPinnedHashEntry.Text, tlsInsecureCheck.Checked,
 			isNew) {
@@ -257,14 +405,15 @@ func (a *App) showProfileDialog(editing *model.ServerProfile) {
 	})
 
 	profileWin.SetContent(container.NewBorder(nil, container.NewHBox(saveBtn, cancelBtn), nil, nil, container.NewVScroll(form)))
-	profileWin.Resize(fyne.NewSize(460, 760))
+	profileWin.Resize(fyne.NewSize(460, 860))
 	profileWin.Show()
 }
 
 // saveProfile creates or updates a profile and stores credentials.
 // Returns true on success, false if validation or DB operation failed.
 func (a *App) saveProfile(editing *model.ServerProfile,
-	name, protocol, host, ips, portStr, pathStr, user, password, authMode, routeMode, cidrs, mtuStr,
+	name, protocol, host, ips, portStr, pathStr, user, password, authMode, routeMode,
+	cidrV4, cidrV6, cidrV4URLs, cidrV6URLs, mtuStr,
 	tlsCaPEM, tlsCaPath, tlsPinnedHash string, tlsInsecure, isNew bool) bool {
 	if name == "" || host == "" || user == "" {
 		showError(i18n.T("DlgValidationTitle"), i18n.T("DlgValidationMsg"), a.window)
@@ -296,7 +445,10 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 			Username:      user,
 			AuthMode:      model.AuthMode(authMode),
 			RoutingMode:   model.RoutingMode(routeMode),
-			CustomCIDRs:   cidrs,
+			CIDRV4:        cidrV4,
+			CIDRV6:        cidrV6,
+			CIDRV4URLs:    cidrV4URLs,
+			CIDRV6URLs:    cidrV6URLs,
 			MTUOverride:   mtu,
 			TLSCACert:     tlsCaPEM,
 			TLSCAPath:     tlsCaPath,
@@ -325,7 +477,10 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 		editing.Username = user
 		editing.AuthMode = model.AuthMode(authMode)
 		editing.RoutingMode = model.RoutingMode(routeMode)
-		editing.CustomCIDRs = cidrs
+		editing.CIDRV4 = cidrV4
+		editing.CIDRV6 = cidrV6
+		editing.CIDRV4URLs = cidrV4URLs
+		editing.CIDRV6URLs = cidrV6URLs
 		editing.MTUOverride = mtu
 		editing.TLSCACert = tlsCaPEM
 		editing.TLSCAPath = tlsCaPath
@@ -345,6 +500,16 @@ func (a *App) saveProfile(editing *model.ServerProfile,
 
 	a.loadProfiles()
 	return true
+}
+
+// marshalCIDRURLsForDB is a helper for tests/debugging that encodes
+// CIDRURLSource slice to JSON.
+func marshalCIDRURLsForDB(sources []model.CIDRURLSource) string {
+	data, err := json.Marshal(sources)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func fmtInt(n int) string {

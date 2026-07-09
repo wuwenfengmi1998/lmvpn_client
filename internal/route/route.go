@@ -5,8 +5,9 @@
 //     interface, with bypass routes for the server's
 //     public IP (v4 and v6) so the WebSocket connection
 //     stays on the physical NIC
-//   - Split tunnel:  only the VPN virtual subnet (v4 and v6) via TUN
-//   - Custom:        user-specified CIDRs via the TUN interface
+//   - Proxy CIDR:    only the specified CIDRs (v4 and v6) via TUN
+//   - Bypass CIDR:   all traffic via TUN except the specified CIDRs,
+//     which are routed via the original gateway
 //
 // IPv6 routes are applied automatically when the server assigned an
 // IPv6 address (Config.VPNIP6 != ""). All routes are tracked so they
@@ -14,9 +15,11 @@
 package route
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
+	"time"
 )
 
 // Mode selects which traffic goes through the VPN tunnel.
@@ -24,8 +27,8 @@ type Mode string
 
 const (
 	ModeFull   Mode = "full"
-	ModeSplit  Mode = "split"
-	ModeCustom Mode = "custom"
+	ModeProxy  Mode = "proxy"
+	ModeBypass Mode = "bypass"
 )
 
 // Config describes the desired routing configuration.
@@ -37,15 +40,17 @@ type Config struct {
 	VPNIP6        string   // assigned tunnel IPv6 (empty = v4-only)
 	VPNPrefix6    int      // IPv6 subnet prefix
 	ServerHost    string   // server hostname/IP (for full-tunnel bypass)
-	CustomCIDRs   []string // for ModeCustom
+	CIDRs         []string // CIDR list for ModeProxy and ModeBypass
 }
 
 // Manager applies and removes routes. It tracks all added routes so
 // they can be cleaned up deterministically.
 type Manager struct {
 	cfg              Config
-	addedRoutes      []string // v4 route specs added, for deletion
-	addedRoutes6     []string // v6 route specs added, for deletion
+	addedRoutes      []string // v4 route specs added via TUN, for deletion
+	addedRoutes6     []string // v6 route specs added via TUN, for deletion
+	bypassRoutes     []string // v4 bypass route specs added via gateway
+	bypassRoutes6    []string // v6 bypass route specs added via gateway
 	serverBypass     bool
 	serverBypass6    bool
 	originalGateway  string
@@ -64,16 +69,86 @@ func (m *Manager) Apply() error {
 	switch m.cfg.Mode {
 	case ModeFull:
 		return m.applyFull()
-	case ModeSplit:
-		return m.applySplit()
-	case ModeCustom:
-		return m.applyCustom()
+	case ModeProxy:
+		return m.applyProxy()
+	case ModeBypass:
+		return m.applyBypass()
 	default:
 		return fmt.Errorf("unknown routing mode: %s", m.cfg.Mode)
 	}
 }
 
-// Cleanup removes all routes that were added by Apply.
+// AddRoutes dynamically adds routes for additional CIDRs after the
+// initial Apply. This is used for CIDRs fetched from URLs after the
+// tunnel is established. In proxy mode the CIDRs are routed via TUN;
+// in bypass mode they are routed via the original gateway.
+func (m *Manager) AddRoutes(cidrs []string) error {
+	var errs []string
+	for _, cidr := range cidrs {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+		if isIPv6CIDR(cidr) {
+			if m.cfg.Mode == ModeBypass {
+				if m.originalGateway6 == "" {
+					continue
+				}
+				if err := addRouteVia6(cidr, m.originalGateway6); err != nil {
+					errs = append(errs, err.Error())
+					continue
+				}
+				m.bypassRoutes6 = append(m.bypassRoutes6, cidr)
+			} else {
+				if err := addRoute6(cidr, m.cfg.InterfaceName); err != nil {
+					errs = append(errs, err.Error())
+					continue
+				}
+				m.addedRoutes6 = append(m.addedRoutes6, cidr)
+			}
+		} else {
+			if m.cfg.Mode == ModeBypass {
+				if m.originalGateway == "" {
+					continue
+				}
+				if err := addRouteVia(cidr, m.originalGateway); err != nil {
+					errs = append(errs, err.Error())
+					continue
+				}
+				m.bypassRoutes = append(m.bypassRoutes, cidr)
+			} else {
+				if err := addRoute(cidr, m.cfg.InterfaceName); err != nil {
+					errs = append(errs, err.Error())
+					continue
+				}
+				m.addedRoutes = append(m.addedRoutes, cidr)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("add routes errors: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// HasOriginalGateway reports whether the manager captured an original
+// default gateway (v4 or v6) during Apply. This is needed by callers
+// that want to add bypass routes dynamically in bypass mode.
+func (m *Manager) HasOriginalGateway() bool {
+	return m.originalGateway != "" || m.originalGateway6 != ""
+}
+
+// OriginalGatewayV4 returns the captured IPv4 default gateway, if any.
+func (m *Manager) OriginalGatewayV4() string {
+	return m.originalGateway
+}
+
+// OriginalGatewayV6 returns the captured IPv6 default gateway, if any.
+func (m *Manager) OriginalGatewayV6() string {
+	return m.originalGateway6
+}
+
+// Cleanup removes all routes that were added by Apply or AddRoutes.
 func (m *Manager) Cleanup() error {
 	var errs []string
 	for _, r := range m.addedRoutes {
@@ -88,6 +163,18 @@ func (m *Manager) Cleanup() error {
 		}
 	}
 	m.addedRoutes6 = nil
+	for _, r := range m.bypassRoutes {
+		if err := deleteRouteVia(r, m.originalGateway); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	m.bypassRoutes = nil
+	for _, r := range m.bypassRoutes6 {
+		if err := deleteRouteVia6(r, m.originalGateway6); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	m.bypassRoutes6 = nil
 	if m.serverBypass {
 		if err := m.deleteServerBypass(); err != nil {
 			errs = append(errs, err.Error())
@@ -106,7 +193,10 @@ func (m *Manager) Cleanup() error {
 	return nil
 }
 
-func (m *Manager) applyFull() error {
+// captureGatewaysAndBypass resolves the server host and adds bypass
+// routes for the server's public IPs via the original gateway. This
+// is shared by applyFull and applyBypass.
+func (m *Manager) captureGatewaysAndBypass() error {
 	// Capture the current default gateways before modifying routes.
 	gw, err := defaultGateway()
 	if err != nil {
@@ -147,6 +237,13 @@ func (m *Manager) applyFull() error {
 			m.serverBypass6 = true
 		}
 	}
+	return nil
+}
+
+func (m *Manager) applyFull() error {
+	if err := m.captureGatewaysAndBypass(); err != nil {
+		return err
+	}
 
 	// Two /1 routes cover the entire IPv4 space and are more specific
 	// than the default route (0.0.0.0/0), so they take precedence
@@ -172,39 +269,76 @@ func (m *Manager) applyFull() error {
 	return nil
 }
 
-func (m *Manager) applySplit() error {
-	subnet := vpnSubnet(m.cfg.VPNIP, m.cfg.VPNPrefix, false)
-	if err := addRoute(subnet, m.cfg.InterfaceName); err != nil {
-		return fmt.Errorf("add split route %s: %w", subnet, err)
-	}
-	m.addedRoutes = append(m.addedRoutes, subnet)
-
-	if m.cfg.VPNIP6 != "" {
-		subnet6 := vpnSubnet(m.cfg.VPNIP6, m.cfg.VPNPrefix6, true)
-		if err := addRoute6(subnet6, m.cfg.InterfaceName); err != nil {
-			return fmt.Errorf("add split route6 %s: %w", subnet6, err)
-		}
-		m.addedRoutes6 = append(m.addedRoutes6, subnet6)
-	}
-	return nil
-}
-
-func (m *Manager) applyCustom() error {
-	for _, cidr := range m.cfg.CustomCIDRs {
+// applyProxy routes only the specified CIDRs through the TUN interface.
+func (m *Manager) applyProxy() error {
+	for _, cidr := range m.cfg.CIDRs {
 		cidr = strings.TrimSpace(cidr)
 		if cidr == "" {
 			continue
 		}
 		if isIPv6CIDR(cidr) {
 			if err := addRoute6(cidr, m.cfg.InterfaceName); err != nil {
-				return fmt.Errorf("add custom route6 %s: %w", cidr, err)
+				return fmt.Errorf("add proxy route6 %s: %w", cidr, err)
 			}
 			m.addedRoutes6 = append(m.addedRoutes6, cidr)
 		} else {
 			if err := addRoute(cidr, m.cfg.InterfaceName); err != nil {
-				return fmt.Errorf("add custom route %s: %w", cidr, err)
+				return fmt.Errorf("add proxy route %s: %w", cidr, err)
 			}
 			m.addedRoutes = append(m.addedRoutes, cidr)
+		}
+	}
+	return nil
+}
+
+// applyBypass routes all traffic through TUN except the specified
+// CIDRs, which are routed via the original gateway. This combines the
+// full-tunnel /1 cover routes with per-CIDR bypass routes.
+func (m *Manager) applyBypass() error {
+	if err := m.captureGatewaysAndBypass(); err != nil {
+		return err
+	}
+
+	// Add bypass routes for user-specified CIDRs via the original
+	// gateway. These are more specific than the /1 cover routes below,
+	// so they take precedence and keep the bypassed traffic on the
+	// physical NIC.
+	for _, cidr := range m.cfg.CIDRs {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+		if isIPv6CIDR(cidr) {
+			if m.originalGateway6 == "" {
+				continue
+			}
+			if err := addRouteVia6(cidr, m.originalGateway6); err != nil {
+				return fmt.Errorf("add bypass route6 %s: %w", cidr, err)
+			}
+			m.bypassRoutes6 = append(m.bypassRoutes6, cidr)
+		} else {
+			if err := addRouteVia(cidr, m.originalGateway); err != nil {
+				return fmt.Errorf("add bypass route %s: %w", cidr, err)
+			}
+			m.bypassRoutes = append(m.bypassRoutes, cidr)
+		}
+	}
+
+	// Two /1 routes cover the entire IPv4 space (full tunnel).
+	for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
+		if err := addRoute(cidr, m.cfg.InterfaceName); err != nil {
+			return fmt.Errorf("add route %s: %w", cidr, err)
+		}
+		m.addedRoutes = append(m.addedRoutes, cidr)
+	}
+
+	// IPv6 full tunnel cover routes.
+	if m.cfg.VPNIP6 != "" {
+		for _, cidr := range []string{"::/1", "8000::/1"} {
+			if err := addRoute6(cidr, m.cfg.InterfaceName); err != nil {
+				return fmt.Errorf("add route6 %s: %w", cidr, err)
+			}
+			m.addedRoutes6 = append(m.addedRoutes6, cidr)
 		}
 	}
 	return nil
@@ -224,24 +358,10 @@ func (m *Manager) deleteServerBypass6() error {
 	return deleteRouteVia6(m.serverIP6+"/128", m.originalGateway6)
 }
 
-// vpnSubnet computes the network CIDR from an IP and prefix.
-func vpnSubnet(ipStr string, prefix int, ipv6 bool) string {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return ipStr + "/" + fmt.Sprint(prefix)
-	}
-	bits := 32
-	if ipv6 {
-		bits = 128
-	}
-	mask := net.CIDRMask(prefix, bits)
-	network := ip.Mask(mask)
-	return fmt.Sprintf("%s/%d", network.String(), prefix)
-}
-
 // resolveHosts resolves a hostname to its first IPv4 and IPv6 addresses.
 // If host is already an IP literal, it is returned directly. Either
-// result may be empty if no address of that family is available.
+// result may be empty if no address of that family is available. The
+// DNS lookup is bounded to 5 seconds to avoid blocking the handshake.
 func resolveHosts(host string) (v4, v6 string, err error) {
 	if ip := net.ParseIP(host); ip != nil {
 		if ip.To4() != nil {
@@ -253,15 +373,17 @@ func resolveHosts(host string) (v4, v6 string, err error) {
 	if h, _, e := net.SplitHostPort(host); e == nil {
 		host = h
 	}
-	ips, err := net.LookupIP(host)
-	if err != nil || len(ips) == 0 {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil || len(addrs) == 0 {
 		return "", "", fmt.Errorf("lookup %s: %w", host, err)
 	}
-	for _, ip := range ips {
-		if v4 == "" && ip.To4() != nil {
-			v4 = ip.String()
-		} else if v6 == "" && ip.To4() == nil {
-			v6 = ip.String()
+	for _, addr := range addrs {
+		if v4 == "" && addr.IP.To4() != nil {
+			v4 = addr.IP.String()
+		} else if v6 == "" && addr.IP.To4() == nil {
+			v6 = addr.IP.String()
 		}
 	}
 	if v4 == "" && v6 == "" {

@@ -8,6 +8,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"net"
 	"strings"
 
 	"lmvpn/internal/paths"
@@ -51,7 +52,10 @@ func (s *Store) migrate() error {
 	if err := s.migrateV3(); err != nil {
 		return err
 	}
-	return s.migrateV4()
+	if err := s.migrateV4(); err != nil {
+		return err
+	}
+	return s.migrateV5()
 }
 
 func (s *Store) migrateV2() error {
@@ -207,6 +211,108 @@ func (s *Store) migrateV4() error {
 	return nil
 }
 
+// migrateV5 replaces the single custom_cidrs column with separate
+// cidr_v4, cidr_v6, cidr_v4_urls, cidr_v6_urls columns. It migrates
+// existing routing modes: 'custom' -> 'proxy', 'split' -> 'full'.
+// Existing custom_cidrs are split into v4/v6 based on address family.
+// Idempotent: skips columns that already exist.
+func (s *Store) migrateV5() error {
+	cols := []struct {
+		name string
+		sql  string
+	}{
+		{"cidr_v4", "ALTER TABLE server_profiles ADD COLUMN cidr_v4 TEXT NOT NULL DEFAULT ''"},
+		{"cidr_v6", "ALTER TABLE server_profiles ADD COLUMN cidr_v6 TEXT NOT NULL DEFAULT ''"},
+		{"cidr_v4_urls", "ALTER TABLE server_profiles ADD COLUMN cidr_v4_urls TEXT NOT NULL DEFAULT ''"},
+		{"cidr_v6_urls", "ALTER TABLE server_profiles ADD COLUMN cidr_v6_urls TEXT NOT NULL DEFAULT ''"},
+	}
+	needMigration := false
+	for _, c := range cols {
+		if !columnExists(s.db, "server_profiles", c.name) {
+			needMigration = true
+			break
+		}
+	}
+	if !needMigration {
+		return nil
+	}
+
+	for _, c := range cols {
+		if !columnExists(s.db, "server_profiles", c.name) {
+			if _, err := s.db.Exec(c.sql); err != nil {
+				return fmt.Errorf("migrate v5 add %s: %w", c.name, err)
+			}
+		}
+	}
+
+	// Migrate existing custom_cidrs into cidr_v4 / cidr_v6 and update
+	// routing mode codes. Only process rows that still have a non-empty
+	// custom_cidrs or an old routing mode.
+	rows, err := s.db.Query(`SELECT id, routing_mode, custom_cidrs FROM server_profiles`)
+	if err != nil {
+		return fmt.Errorf("migrate v5 read rows: %w", err)
+	}
+	type row struct {
+		id          int64
+		routingMode string
+		customCIDRs string
+	}
+	var toUpdate []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.routingMode, &r.customCIDRs); err != nil {
+			rows.Close()
+			return fmt.Errorf("migrate v5 scan: %w", err)
+		}
+		toUpdate = append(toUpdate, r)
+	}
+	rows.Close()
+
+	for _, r := range toUpdate {
+		newMode := r.routingMode
+		switch newMode {
+		case "custom":
+			newMode = "proxy"
+		case "split":
+			newMode = "full"
+		}
+
+		v4CIDRs, v6CIDRs := splitCIDRsByFamily(r.customCIDRs)
+
+		_, err := s.db.Exec(
+			`UPDATE server_profiles SET routing_mode = ?, cidr_v4 = ?, cidr_v6 = ? WHERE id = ?`,
+			newMode, v4CIDRs, v6CIDRs, r.id)
+		if err != nil {
+			return fmt.Errorf("migrate v5 update row %d: %w", r.id, err)
+		}
+	}
+
+	return nil
+}
+
+// splitCIDRsByFamily splits a comma-separated CIDR string into IPv4 and
+// IPv6 parts. Used for migration from the old custom_cidrs column.
+func splitCIDRsByFamily(customCIDRs string) (v4, v6 string) {
+	if customCIDRs == "" {
+		return "", ""
+	}
+	var v4Parts, v6Parts []string
+	for _, part := range strings.Split(customCIDRs, ",") {
+		c := strings.TrimSpace(part)
+		if c == "" {
+			continue
+		}
+		if _, ipNet, err := net.ParseCIDR(c); err == nil {
+			if ipNet.IP.To4() != nil {
+				v4Parts = append(v4Parts, c)
+			} else {
+				v6Parts = append(v6Parts, c)
+			}
+		}
+	}
+	return strings.Join(v4Parts, ", "), strings.Join(v6Parts, ", ")
+}
+
 // columnExists reports whether a column exists on a table.
 func columnExists(db *sql.DB, table, column string) bool {
 	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
@@ -242,6 +348,10 @@ CREATE TABLE IF NOT EXISTS server_profiles (
 	auth_mode       TEXT    NOT NULL DEFAULT 'both',
 	routing_mode    TEXT    NOT NULL DEFAULT 'full',
 	custom_cidrs    TEXT    NOT NULL DEFAULT '',
+	cidr_v4         TEXT    NOT NULL DEFAULT '',
+	cidr_v6         TEXT    NOT NULL DEFAULT '',
+	cidr_v4_urls    TEXT    NOT NULL DEFAULT '',
+	cidr_v6_urls    TEXT    NOT NULL DEFAULT '',
 	mtu_override    INTEGER NOT NULL DEFAULT 0,
 	auto_connect    INTEGER NOT NULL DEFAULT 0,
 	created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

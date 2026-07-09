@@ -49,20 +49,31 @@ type Request struct {
 // vpn.SessionConfig but is kept separate to avoid importing the vpn
 // package (which needs root-only TUN) into the GUI.
 type ClientConfig struct {
-	ServerURL     string   `json:"server_url"`
-	SNIHost       string   `json:"sni_host"`        // TLS SNI hostname for CDN
-	ServerIPs     []string `json:"server_ips"`      // CDN edge IP list for failover
-	Username      string   `json:"username"`
-	Password      string   `json:"password"`
-	Token         string   `json:"token"`
-	AuthMode      string   `json:"auth_mode"`
-	RoutingMode   string   `json:"routing_mode"`
-	CustomCIDRs   []string `json:"custom_cidrs"`
-	MTUOverride   int      `json:"mtu_override"`
-	TLSCACert     string   `json:"tls_ca_cert"`     // inline CA cert PEM (wss only)
-	TLSCAPath     string   `json:"tls_ca_path"`     // CA cert file path (wss only)
-	TLSInsecure   bool     `json:"tls_insecure"`    // skip cert verification (wss only)
-	TLSPinnedHash string   `json:"tls_pinned_hash"` // SHA-256 cert pin (wss only)
+	ServerURL     string          `json:"server_url"`
+	SNIHost       string          `json:"sni_host"`        // TLS SNI hostname for CDN
+	ServerIPs     []string        `json:"server_ips"`      // CDN edge IP list for failover
+	Username      string          `json:"username"`
+	Password      string          `json:"password"`
+	Token         string          `json:"token"`
+	AuthMode      string          `json:"auth_mode"`
+	RoutingMode   string          `json:"routing_mode"`    // "full", "proxy", "bypass"
+	CIDRV4        []string        `json:"cidr_v4"`         // static IPv4 CIDRs
+	CIDRV6        []string        `json:"cidr_v6"`         // static IPv6 CIDRs
+	CIDRV4URLs    []CIDRURLSource `json:"cidr_v4_urls"`   // IPv4 CIDR URL sources
+	CIDRV6URLs    []CIDRURLSource `json:"cidr_v6_urls"`   // IPv6 CIDR URL sources
+	MTUOverride   int             `json:"mtu_override"`
+	TLSCACert     string          `json:"tls_ca_cert"`     // inline CA cert PEM (wss only)
+	TLSCAPath     string          `json:"tls_ca_path"`     // CA cert file path (wss only)
+	TLSInsecure   bool            `json:"tls_insecure"`    // skip cert verification (wss only)
+	TLSPinnedHash string          `json:"tls_pinned_hash"` // SHA-256 cert pin (wss only)
+}
+
+// CIDRURLSource describes a URL that provides a CIDR list. It mirrors
+// model.CIDRURLSource but is kept here to avoid importing the model
+// package into the IPC wire format.
+type CIDRURLSource struct {
+	URL         string `json:"url"`
+	FetchTiming string `json:"fetch_timing"` // "before" or "after"
 }
 
 // Event is a notification from the daemon to the GUI.
@@ -285,10 +296,10 @@ func RoutingModeFromIPC(s string) route.Mode {
 	switch s {
 	case "full":
 		return route.ModeFull
-	case "split":
-		return route.ModeSplit
-	case "custom":
-		return route.ModeCustom
+	case "proxy":
+		return route.ModeProxy
+	case "bypass":
+		return route.ModeBypass
 	default:
 		return route.ModeFull
 	}

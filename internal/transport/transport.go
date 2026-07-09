@@ -89,12 +89,26 @@ func Connect(ctx context.Context, cfg HandshakeConfig) (*Conn, error) {
 
 	ws.SetReadLimit(protocol.MaxMessageSize)
 
+	// Watch ctx and close the WS if it is cancelled. This unblocks all
+	// ReadMessage/WriteMessage calls (they only use SetReadDeadline,
+	// not ctx). The goroutine exits when connectDone is closed (on
+	// either success or failure) to avoid leaking.
+	connectDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			ws.Close()
+		case <-connectDone:
+		}
+	}()
+
 	conn := &Conn{ws: ws}
 
 	// Step 2: authenticate (only for password mode; JWT is validated
 	// during the WS upgrade).
 	if cfg.Token == "" {
 		if err := conn.passwordAuth(cfg.Username, cfg.Password); err != nil {
+			close(connectDone)
 			ws.Close()
 			return nil, err
 		}
@@ -103,6 +117,7 @@ func Connect(ctx context.Context, cfg HandshakeConfig) (*Conn, error) {
 	// Step 3: receive init (or error/auth_err).
 	initMsg, err := conn.readInit()
 	if err != nil {
+		close(connectDone)
 		ws.Close()
 		return nil, err
 	}
@@ -111,6 +126,7 @@ func Connect(ctx context.Context, cfg HandshakeConfig) (*Conn, error) {
 	// Step 4: configure TUN via callback.
 	if cfg.OnInit != nil {
 		if err := cfg.OnInit(initMsg); err != nil {
+			close(connectDone)
 			ws.Close()
 			return nil, fmt.Errorf("tun configure: %w", err)
 		}
@@ -118,9 +134,14 @@ func Connect(ctx context.Context, cfg HandshakeConfig) (*Conn, error) {
 
 	// Step 5: send ready.
 	if err := conn.sendReady(); err != nil {
+		close(connectDone)
 		ws.Close()
 		return nil, fmt.Errorf("send ready: %w", err)
 	}
+
+	// Handshake complete - stop the ctx watcher so it doesn't close
+	// the connection after we return it to the caller.
+	close(connectDone)
 
 	// Step 6: set up keepalive — reset read deadline on each server
 	// ping, and auto-respond with pong (allowed via WriteControl in

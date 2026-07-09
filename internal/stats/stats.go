@@ -135,6 +135,13 @@ type Snapshot struct {
 	AssignedIP6 string
 	State       State
 	Uptime      time.Duration
+
+	// Routing info (filled by SessionManager.reportStats).
+	RoutingMode string `json:"routing_mode,omitempty"` // "full", "proxy", "bypass"
+	CIDRV4Total int    `json:"cidr_v4_total,omitempty"`
+	CIDRV4Hits  int    `json:"cidr_v4_hits,omitempty"`
+	CIDRV6Total int    `json:"cidr_v6_total,omitempty"`
+	CIDRV6Hits  int    `json:"cidr_v6_hits,omitempty"`
 }
 
 // Snapshot returns a point-in-time copy of the statistics.
