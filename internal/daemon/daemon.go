@@ -119,6 +119,16 @@ func (d *daemon) handle(conn net.Conn, req ipc.Request) {
 			d.server.Broadcast(ipc.Event{Event: ipc.EvStats, Stats: &snap})
 		}
 		_ = ipc.WriteOK(conn)
+	case ipc.CmdRefreshCIDR:
+		d.mu.Lock()
+		sess := d.session
+		d.mu.Unlock()
+		if sess != nil {
+			go sess.RefreshCIDRs()
+			_ = ipc.WriteOK(conn)
+		} else {
+			_ = ipc.WriteErr(conn, "no active session")
+		}
 	case ipc.CmdVersion:
 		_ = ipc.WriteVersion(conn, version.Version)
 	default:
@@ -161,7 +171,7 @@ func (d *daemon) startSession(conn net.Conn, req ipc.Request) {
 	d.cancel = cancel
 	d.session = vpn.New(
 		func(s stats.State) {
-			d.server.Broadcast(ipc.Event{Event: ipc.EvState, State: string(s)})
+			d.server.Broadcast(ipc.Event{Event: ipc.EvState, State: string(s), ConnectStep: d.session.Stats().ConnectStep()})
 		},
 		func(snap stats.Snapshot) {
 			s := snap

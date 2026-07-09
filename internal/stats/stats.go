@@ -34,6 +34,9 @@ type Stats struct {
 	state       atomic.Value // State
 	assignedIP  atomic.Value // string (IPv4)
 	assignedIP6 atomic.Value // string (IPv6, may be empty)
+	routeLoading atomic.Bool  // true while deferred routes are being applied
+	connectStep  atomic.Value // string (human-readable connection step)
+	cidrError    atomic.Value // string (CIDR fetch error message, empty = no error)
 }
 
 // AddRx records a downloaded packet (WebSocket → TUN) of length n,
@@ -76,6 +79,8 @@ func New() *Stats {
 	s.state.Store(StateDisconnected)
 	s.assignedIP.Store("")
 	s.assignedIP6.Store("")
+	s.connectStep.Store("")
+	s.cidrError.Store("")
 	return s
 }
 
@@ -100,6 +105,42 @@ func (s *Stats) SetDisconnected() {
 	s.assignedIP.Store("")
 	s.assignedIP6.Store("")
 	s.state.Store(StateDisconnected)
+	s.routeLoading.Store(false)
+	s.connectStep.Store("")
+	s.cidrError.Store("")
+}
+
+// SetRouteLoading sets whether deferred routes are currently being
+// applied (e.g. thousands of CIDR bypass routes being added in the
+// background after the tunnel is up).
+func (s *Stats) SetRouteLoading(loading bool) { s.routeLoading.Store(loading) }
+
+// RouteLoading returns whether deferred routes are being applied.
+func (s *Stats) RouteLoading() bool { return s.routeLoading.Load() }
+
+// SetConnectStep sets a human-readable description of the current
+// connection step (e.g. "fetching CIDR lists"). Empty clears it.
+func (s *Stats) SetConnectStep(step string) { s.connectStep.Store(step) }
+
+// ConnectStep returns the current connection step description.
+func (s *Stats) ConnectStep() string {
+	v := s.connectStep.Load()
+	if v == nil {
+		return ""
+	}
+	return v.(string)
+}
+
+// SetCIDRError sets a CIDR fetch error message (empty = no error).
+func (s *Stats) SetCIDRError(msg string) { s.cidrError.Store(msg) }
+
+// CIDRError returns the current CIDR fetch error message.
+func (s *Stats) CIDRError() string {
+	v := s.cidrError.Load()
+	if v == nil {
+		return ""
+	}
+	return v.(string)
 }
 
 // AssignedIP returns the server-assigned tunnel IPv4.
@@ -137,11 +178,14 @@ type Snapshot struct {
 	Uptime      time.Duration
 
 	// Routing info (filled by SessionManager.reportStats).
-	RoutingMode string `json:"routing_mode,omitempty"` // "full", "proxy", "bypass"
-	CIDRV4Total int    `json:"cidr_v4_total,omitempty"`
-	CIDRV4Hits  int    `json:"cidr_v4_hits,omitempty"`
-	CIDRV6Total int    `json:"cidr_v6_total,omitempty"`
-	CIDRV6Hits  int    `json:"cidr_v6_hits,omitempty"`
+	RoutingMode  string `json:"routing_mode,omitempty"` // "full", "proxy", "bypass"
+	CIDRV4Total  int    `json:"cidr_v4_total,omitempty"`
+	CIDRV4Hits   int    `json:"cidr_v4_hits,omitempty"`
+	CIDRV6Total  int    `json:"cidr_v6_total,omitempty"`
+	CIDRV6Hits   int    `json:"cidr_v6_hits,omitempty"`
+	RouteLoading bool   `json:"route_loading,omitempty"` // deferred routes being applied
+	ConnectStep  string `json:"connect_step,omitempty"` // current connection step
+	CIDRError    string `json:"cidr_error,omitempty"`   // CIDR fetch error message
 }
 
 // Snapshot returns a point-in-time copy of the statistics.
@@ -166,5 +210,8 @@ func (s *Stats) Snapshot() Snapshot {
 		snap.ConnectedAt = time.Unix(ts, 0)
 		snap.Uptime = time.Since(snap.ConnectedAt)
 	}
+	snap.RouteLoading = s.routeLoading.Load()
+	snap.ConnectStep = s.ConnectStep()
+	snap.CIDRError = s.CIDRError()
 	return snap
 }

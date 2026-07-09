@@ -25,11 +25,12 @@ import (
 
 // Command types sent from GUI to daemon.
 const (
-	CmdStart    = "start"
-	CmdStop     = "stop"
-	CmdShutdown = "shutdown"
-	CmdStats    = "stats"
-	CmdVersion  = "version" // query daemon build version
+	CmdStart       = "start"
+	CmdStop        = "stop"
+	CmdShutdown    = "shutdown"
+	CmdStats       = "stats"
+	CmdVersion     = "version"       // query daemon build version
+	CmdRefreshCIDR = "refresh_cidr"  // re-fetch CIDR URL sources and update routes
 )
 
 // Event types sent from daemon to GUI.
@@ -78,11 +79,12 @@ type CIDRURLSource struct {
 
 // Event is a notification from the daemon to the GUI.
 type Event struct {
-	Event   string          `json:"event"`
-	State   string          `json:"state,omitempty"`
-	Stats   *stats.Snapshot `json:"stats,omitempty"`
-	Code    string          `json:"code,omitempty"` // stable auth-error code for EvError
-	Message string          `json:"message,omitempty"`
+	Event       string          `json:"event"`
+	State       string          `json:"state,omitempty"`
+	ConnectStep string          `json:"connect_step,omitempty"` // current connection step (for EvState)
+	Stats       *stats.Snapshot `json:"stats,omitempty"`
+	Code        string          `json:"code,omitempty"`          // stable auth-error code for EvError
+	Message     string          `json:"message,omitempty"`
 }
 
 // --- Wire helpers ---
@@ -262,6 +264,11 @@ func SendStart(c *Client, cfg ClientConfig) error {
 // SendStop is a convenience helper for sending a stop command.
 func SendStop(c *Client) error {
 	return c.Send(Request{Cmd: CmdStop})
+}
+
+// SendRefreshCIDR is a convenience helper for sending a refresh CIDR command.
+func SendRefreshCIDR(c *Client) error {
+	return c.Send(Request{Cmd: CmdRefreshCIDR})
 }
 
 // SendShutdown is a convenience helper for sending a shutdown command.

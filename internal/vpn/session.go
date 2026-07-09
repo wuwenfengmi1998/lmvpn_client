@@ -70,6 +70,9 @@ type SessionManager struct {
 	// CIDR hit tracking. Set during setupTUN, cleared on cleanup.
 	cidrTracker *cidrTracker
 
+	// lastCfg stores the session config for RefreshCIDRs.
+	lastCfg SessionConfig
+
 	// EWMA speed smoothing state. Only touched by reportStats (single
 	// goroutine), so no lock needed. ewma* fields hold the smoothed
 	// bytes/sec; prev* hold the last snapshot's cumulative counters and
@@ -116,6 +119,7 @@ func (sm *SessionManager) Connect(ctx context.Context, cfg SessionConfig) error 
 	sm.cancel = cancel
 	sm.running = true
 	sm.done = make(chan struct{})
+	sm.lastCfg = cfg
 	sm.mu.Unlock()
 
 	go sm.run(ctx, cfg)
@@ -193,6 +197,8 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 	var beforeCIDRs []string
 	allURLSources := append(append([]model.CIDRURLSource{}, cfg.CIDRV4URLs...), cfg.CIDRV6URLs...)
 	if len(allURLSources) > 0 {
+		sm.stats.SetConnectStep("fetch_cidrs")
+		sm.setState(stats.StateConnecting)
 		log.L().Info("fetching before-proxy CIDR lists", "url_count", len(allURLSources))
 		fetched, err := cidrsource.FetchBeforeProxy(ctx, allURLSources)
 		if err != nil {
@@ -200,6 +206,7 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 		}
 		beforeCIDRs = fetched
 		log.L().Info("before-proxy CIDR lists ready", "total_cidrs", len(beforeCIDRs))
+		sm.stats.SetConnectStep("")
 	}
 
 	backoff := time.Second
@@ -344,6 +351,7 @@ func fatalAuthError(err error) (protocol.AuthErrorCode, string, bool) {
 // sources (fetched once in run(), reused across reconnection attempts).
 func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, targetIP string, beforeCIDRs []string) error {
 	sm.setState(stats.StateConnecting)
+	sm.stats.SetConnectStep("connecting")
 
 	// Build URL for this attempt. If targetIP is set (CDN failover),
 	// build a URL with that IP. Otherwise use base ServerURL.
@@ -441,6 +449,7 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 	sm.mu.Unlock()
 
 	sm.stats.SetConnected(conn.Init().IP, conn.Init().IP6)
+	sm.stats.SetConnectStep("load_routes")
 	sm.setState(stats.StateConnected)
 	log.L().Info("VPN connected",
 		"ip", conn.Init().IP, "server_ip", conn.Init().ServerIP,
@@ -451,10 +460,26 @@ func (sm *SessionManager) connectOnce(ctx context.Context, cfg SessionConfig, ta
 	statsDone := make(chan struct{})
 	go sm.reportStats(statsDone, ctx)
 
-	// Fetch "after-proxy" CIDR lists via the tunnel and dynamically add
-	// their routes. This runs in a goroutine so it doesn't block the
-	// packet pump.
-	go sm.fetchAfterProxyCIDRs(ctx, cfg)
+	// Apply deferred routes (user CIDRs) and fetch after-proxy CIDR
+	// lists in a background goroutine. For proxy/bypass modes with
+	// thousands of CIDRs this uses batch script execution (~3-5s).
+	go func() {
+		sm.mu.Lock()
+		mgr := sm.routeMgr
+		sm.mu.Unlock()
+		if mgr != nil {
+			sm.stats.SetRouteLoading(true)
+			sm.stats.SetConnectStep("load_routes")
+			log.L().Info("applying deferred routes")
+			if err := mgr.ApplyDeferred(); err != nil {
+				log.L().Error("apply deferred routes failed (continuing)", "error", err)
+			}
+			sm.stats.SetRouteLoading(false)
+			sm.stats.SetConnectStep("")
+			log.L().Info("deferred routes applied")
+		}
+		sm.fetchAfterProxyCIDRs(ctx, cfg)
+	}()
 
 	// Run the packet pump (blocks until connection breaks).
 	sm.pumpPackets(ctx, conn)
@@ -562,34 +587,95 @@ func (sm *SessionManager) fetchAfterProxyCIDRs(ctx context.Context, cfg SessionC
 		return
 	}
 
+	sm.stats.SetRouteLoading(true)
+	sm.stats.SetConnectStep("fetch_cidrs")
 	log.L().Info("fetching after-proxy CIDR lists", "url_count", afterCount)
 	fetched, err := cidrsource.FetchAfterProxy(ctx, allURLSources)
+	sm.stats.SetConnectStep("load_routes")
 	if err != nil {
 		log.L().Error("fetch after-proxy CIDR lists completed with errors", "error", err)
+		sm.stats.SetCIDRError(err.Error())
+	} else {
+		sm.stats.SetCIDRError("")
 	}
 	if len(fetched) == 0 {
+		sm.stats.SetRouteLoading(false)
+		sm.stats.SetConnectStep("")
 		return
 	}
 
+	merged := fetched // AddRoutes already calls mergeCIDRs internally
+	added := sm.addCIDRRoutes(fetched)
+	if added > 0 {
+		log.L().Info("added after-proxy routes", "fetched", len(fetched), "added", added, "merged", len(merged))
+	}
+
+	sm.stats.SetRouteLoading(false)
+	sm.stats.SetConnectStep("")
+}
+
+// addCIDRRoutes adds routes and updates the CIDR tracker. Returns the
+// number of CIDRs successfully added (after merge).
+func (sm *SessionManager) addCIDRRoutes(cidrs []string) int {
 	sm.mu.Lock()
 	mgr := sm.routeMgr
+	tracker := sm.cidrTracker
 	sm.mu.Unlock()
 	if mgr == nil {
+		return 0
+	}
+
+	if err := mgr.AddRoutes(cidrs); err != nil {
+		log.L().Error("add CIDR routes failed (continuing)", "error", err)
+	}
+	if tracker != nil {
+		tracker.AddCIDRs(cidrs)
+	}
+	return len(cidrs)
+}
+
+// RefreshCIDRs re-fetches all CIDR URL sources (both before and after
+// timing) via the current tunnel and dynamically adds their routes.
+// This is called when the user clicks the "Refresh CIDR" button.
+func (sm *SessionManager) RefreshCIDRs() {
+	sm.mu.Lock()
+	ctx := sm.cancel
+	cfg := sm.lastCfg
+	sm.mu.Unlock()
+	if ctx == nil {
 		return
 	}
 
-	if err := mgr.AddRoutes(fetched); err != nil {
-		log.L().Error("add after-proxy routes failed (continuing)", "error", err)
-	} else {
-		log.L().Info("added after-proxy routes", "count", len(fetched))
+	// Use a background context with 30s timeout so the refresh works
+	// even if the session context is in a weird state.
+	refreshCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = refreshCtx
+
+	allURLSources := append(append([]model.CIDRURLSource{}, cfg.CIDRV4URLs...), cfg.CIDRV6URLs...)
+	if len(allURLSources) == 0 {
+		return
 	}
 
-	sm.mu.Lock()
-	tracker := sm.cidrTracker
-	sm.mu.Unlock()
-	if tracker != nil {
-		tracker.AddCIDRs(fetched)
+	sm.stats.SetRouteLoading(true)
+	sm.stats.SetCIDRError("")
+	log.L().Info("refreshing CIDR lists", "url_count", len(allURLSources))
+
+	fetched, err := cidrsource.FetchAfterProxy(refreshCtx, allURLSources)
+	if err != nil {
+		log.L().Error("refresh CIDR lists completed with errors", "error", err)
+		sm.stats.SetCIDRError(err.Error())
+	} else {
+		sm.stats.SetCIDRError("")
 	}
+	if len(fetched) == 0 {
+		sm.stats.SetRouteLoading(false)
+		return
+	}
+
+	added := sm.addCIDRRoutes(fetched)
+	log.L().Info("refreshed CIDR routes", "fetched", len(fetched), "added", added)
+	sm.stats.SetRouteLoading(false)
 }
 
 // pumpPackets runs the bidirectional packet loop until the connection

@@ -49,6 +49,7 @@ type App struct {
 	routingModeLabel *widget.Label
 	cidrV4Label      *widget.Label
 	cidrV6Label      *widget.Label
+	refreshCIDRBtn   *widget.Button
 	connectBtn    *widget.Button
 	disconnectBtn *widget.Button
 

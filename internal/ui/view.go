@@ -78,6 +78,9 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 	a.cidrV6Label = widget.NewLabel("")
 	a.cidrV6Label.Hide()
 
+	a.refreshCIDRBtn = widget.NewButton(i18n.T("BtnRefreshCIDR"), a.onRefreshCIDR)
+	a.refreshCIDRBtn.Hide()
+
 	statusCard := widget.NewCard(i18n.T("StatusLabel"), "", container.NewVBox(
 		a.stateLabel,
 		a.ipLabel,
@@ -89,6 +92,7 @@ func (a *App) buildMainWindow() fyne.CanvasObject {
 		a.routingModeLabel,
 		a.cidrV4Label,
 		a.cidrV6Label,
+		a.refreshCIDRBtn,
 	))
 
 	// Buttons.
@@ -218,6 +222,24 @@ func (a *App) onConnect() {
 	}()
 }
 
+// onRefreshCIDR handles the Refresh CIDR button click.
+func (a *App) onRefreshCIDR() {
+	a.mu.Lock()
+	client := a.ipcClient
+	a.mu.Unlock()
+	if client == nil {
+		return
+	}
+	a.refreshCIDRBtn.Disable()
+	go func() {
+		_ = ipc.SendRefreshCIDR(client)
+		time.Sleep(2 * time.Second)
+		fyne.Do(func() {
+			a.refreshCIDRBtn.Enable()
+		})
+	}()
+}
+
 // onDisconnect handles the Disconnect button click.
 func (a *App) onDisconnect() {
 	a.mu.Lock()
@@ -243,6 +265,7 @@ func (a *App) onDisconnect() {
 	a.routingModeLabel.Hide()
 	a.cidrV4Label.Hide()
 	a.cidrV6Label.Hide()
+	a.refreshCIDRBtn.Hide()
 }
 
 // eventLoop reads IPC events from the daemon and updates the UI.
@@ -275,6 +298,7 @@ func (a *App) eventLoop() {
 					a.routingModeLabel.Hide()
 					a.cidrV4Label.Hide()
 					a.cidrV6Label.Hide()
+					a.refreshCIDRBtn.Hide()
 					a.setConnButtons(true, false)
 				}
 			})
@@ -287,7 +311,7 @@ func (a *App) eventLoop() {
 				current := a.ipcClient
 				a.mu.Unlock()
 				if current == client {
-					a.applyState(ev.State)
+					a.applyStateWithStep(ev.State, ev.ConnectStep)
 				}
 			})
 		case ipc.EvStats:
@@ -346,12 +370,27 @@ func authErrorMessage(code, fallback string) string {
 
 // applyState updates UI elements for a state change.
 func (a *App) applyState(state string) {
+	a.applyStateWithStep(state, "")
+}
+
+// applyStateWithStep updates UI elements for a state change, optionally
+// showing a connection step description (e.g. "fetching CIDR lists").
+func (a *App) applyStateWithStep(state, step string) {
+	stepLabel := connectStepLabel(step)
 	switch stats.State(state) {
 	case stats.StateConnected:
-		a.stateLabel.SetText(i18n.T("StateConnected"))
+		if stepLabel != "" {
+			a.stateLabel.SetText(i18n.T("StateConnected") + " (" + stepLabel + ")")
+		} else {
+			a.stateLabel.SetText(i18n.T("StateConnected"))
+		}
 		a.setConnButtons(false, true)
 	case stats.StateConnecting:
-		a.stateLabel.SetText(i18n.T("StateConnecting"))
+		if stepLabel != "" {
+			a.stateLabel.SetText(i18n.T("StateConnecting") + " (" + stepLabel + ")")
+		} else {
+			a.stateLabel.SetText(i18n.T("StateConnecting"))
+		}
 		a.setConnButtons(false, true)
 	case stats.StateReconnecting:
 		a.stateLabel.SetText(i18n.T("StateReconnecting"))
@@ -378,7 +417,12 @@ func (a *App) applyStats(s stats.Snapshot) {
 		a.ip6Label.SetText(i18n.T("Ip6None"))
 	}
 	if s.State == stats.StateConnected {
-		a.stateLabel.SetText(i18n.T("StateConnected"))
+		stepLabel := connectStepLabel(s.ConnectStep)
+		if stepLabel != "" {
+			a.stateLabel.SetText(i18n.T("StateConnected") + " (" + stepLabel + ")")
+		} else {
+			a.stateLabel.SetText(i18n.T("StateConnected"))
+		}
 	}
 	a.rxV4Label.SetText(i18n.T("RxV4Label", map[string]interface{}{
 		"bytes": formatBytes(s.RxBytesV4), "speed": formatSpeed(s.RxSpeedV4),
@@ -405,33 +449,64 @@ func (a *App) applyStats(s stats.Snapshot) {
 	// Routing mode + CIDR hit statistics.
 	if s.RoutingMode != "" {
 		modeLabel := routeModeLabel(s.RoutingMode)
+		if s.RouteLoading {
+			modeLabel += " (" + i18n.T("RouteLoading") + ")"
+		}
 		a.routingModeLabel.SetText(i18n.T("StatusRoutingMode", map[string]interface{}{"mode": modeLabel}))
 		a.routingModeLabel.Show()
-		switch s.RoutingMode {
-		case "proxy":
-			a.cidrV4Label.SetText(fmt.Sprintf("IPv4 CIDR: %d/%d %s",
-				s.CIDRV4Hits, s.CIDRV4Total, i18n.T("CIDRHit")))
-			a.cidrV6Label.SetText(fmt.Sprintf("IPv6 CIDR: %d/%d %s",
-				s.CIDRV6Hits, s.CIDRV6Total, i18n.T("CIDRHit")))
+
+		// Show CIDR error if present.
+		if s.CIDRError != "" {
+			a.cidrV4Label.SetText("IPv4 CIDR: " + i18n.T("CIDRFetchError"))
+			a.cidrV6Label.SetText("IPv6 CIDR: " + i18n.T("CIDRFetchError"))
 			a.cidrV4Label.Show()
 			a.cidrV6Label.Show()
-		case "bypass":
-			a.cidrV4Label.SetText(fmt.Sprintf("IPv4 CIDR: %d %s | %s: %d %s",
-				s.CIDRV4Total, i18n.T("CIDRConfigured"),
-				i18n.T("CIDRUnmatched"), s.CIDRV4Hits, i18n.T("CIDRDestinations")))
-			a.cidrV6Label.SetText(fmt.Sprintf("IPv6 CIDR: %d %s | %s: %d %s",
-				s.CIDRV6Total, i18n.T("CIDRConfigured"),
-				i18n.T("CIDRUnmatched"), s.CIDRV6Hits, i18n.T("CIDRDestinations")))
-			a.cidrV4Label.Show()
-			a.cidrV6Label.Show()
-		default:
-			a.cidrV4Label.Hide()
-			a.cidrV6Label.Hide()
+			a.refreshCIDRBtn.Show()
+		} else {
+			switch s.RoutingMode {
+			case "proxy":
+				if s.RouteLoading {
+					a.cidrV4Label.SetText(fmt.Sprintf("IPv4 CIDR: %d/%d (%s)",
+						s.CIDRV4Hits, s.CIDRV4Total, i18n.T("CIDRLoading")))
+					a.cidrV6Label.SetText(fmt.Sprintf("IPv6 CIDR: %d/%d (%s)",
+						s.CIDRV6Hits, s.CIDRV6Total, i18n.T("CIDRLoading")))
+				} else {
+					a.cidrV4Label.SetText(fmt.Sprintf("IPv4 CIDR: %d/%d %s",
+						s.CIDRV4Hits, s.CIDRV4Total, i18n.T("CIDRHit")))
+					a.cidrV6Label.SetText(fmt.Sprintf("IPv6 CIDR: %d/%d %s",
+						s.CIDRV6Hits, s.CIDRV6Total, i18n.T("CIDRHit")))
+				}
+				a.cidrV4Label.Show()
+				a.cidrV6Label.Show()
+				a.refreshCIDRBtn.Show()
+			case "bypass":
+				if s.RouteLoading {
+					a.cidrV4Label.SetText(fmt.Sprintf("IPv4 CIDR: %d/%d (%s)",
+						s.CIDRV4Hits, s.CIDRV4Total, i18n.T("CIDRLoading")))
+					a.cidrV6Label.SetText(fmt.Sprintf("IPv6 CIDR: %d/%d (%s)",
+						s.CIDRV6Hits, s.CIDRV6Total, i18n.T("CIDRLoading")))
+				} else {
+					a.cidrV4Label.SetText(fmt.Sprintf("IPv4 CIDR: %d %s | %s: %d %s",
+						s.CIDRV4Total, i18n.T("CIDRConfigured"),
+						i18n.T("CIDRUnmatched"), s.CIDRV4Hits, i18n.T("CIDRDestinations")))
+					a.cidrV6Label.SetText(fmt.Sprintf("IPv6 CIDR: %d %s | %s: %d %s",
+						s.CIDRV6Total, i18n.T("CIDRConfigured"),
+						i18n.T("CIDRUnmatched"), s.CIDRV6Hits, i18n.T("CIDRDestinations")))
+				}
+				a.cidrV4Label.Show()
+				a.cidrV6Label.Show()
+				a.refreshCIDRBtn.Show()
+			default:
+				a.cidrV4Label.Hide()
+				a.cidrV6Label.Hide()
+				a.refreshCIDRBtn.Hide()
+			}
 		}
 	} else {
 		a.routingModeLabel.Hide()
 		a.cidrV4Label.Hide()
 		a.cidrV6Label.Hide()
+		a.refreshCIDRBtn.Hide()
 	}
 }
 
@@ -447,6 +522,21 @@ func routeModeLabel(code string) string {
 		return i18n.T("RoutingModeBypass")
 	default:
 		return code
+	}
+}
+
+// connectStepLabel translates a connection step code to a localised
+// display string. Returns "" for unknown/empty steps.
+func connectStepLabel(step string) string {
+	switch step {
+	case "fetch_cidrs":
+		return i18n.T("StepFetchCIDRs")
+	case "connecting":
+		return i18n.T("StepConnecting")
+	case "load_routes":
+		return i18n.T("StepLoadRoutes")
+	default:
+		return ""
 	}
 }
 
