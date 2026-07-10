@@ -197,7 +197,7 @@ func (sm *SessionManager) run(ctx context.Context, cfg SessionConfig) {
 	// to avoid consuming the server's 30s ReadyTimeout budget.
 	var beforeCIDRs []string
 	allURLSources := append(append([]model.CIDRURLSource{}, cfg.CIDRV4URLs...), cfg.CIDRV6URLs...)
-	if len(allURLSources) > 0 {
+	if len(allURLSources) > 0 && cfg.RoutingMode != route.ModeFull {
 		sm.stats.SetConnectStep("fetch_cidrs")
 		sm.setState(stats.StateConnecting)
 		log.L().Info("fetching before-proxy CIDR lists", "url_count", len(allURLSources))
@@ -588,6 +588,9 @@ func (sm *SessionManager) setupTUN(init protocol.InitMessage, cfg SessionConfig,
 // (via the tunnel) and dynamically adds their routes to the route
 // manager. This is called in a goroutine after the data plane is up.
 func (sm *SessionManager) fetchAfterProxyCIDRs(ctx context.Context, cfg SessionConfig) {
+	if cfg.RoutingMode == route.ModeFull {
+		return
+	}
 	allURLSources := append(append([]model.CIDRURLSource{}, cfg.CIDRV4URLs...), cfg.CIDRV6URLs...)
 	// Count only "after" sources for logging.
 	afterCount := 0
@@ -656,6 +659,10 @@ func (sm *SessionManager) RefreshCIDRs() {
 	cfg := sm.lastCfg
 	sm.mu.Unlock()
 	if ctx == nil {
+		return
+	}
+
+	if cfg.RoutingMode == route.ModeFull {
 		return
 	}
 
